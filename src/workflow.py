@@ -4,7 +4,6 @@ from __future__ import annotations
 
 from agentic_sdk import (
     EvidenceCheckReflect,
-    GenerativeAction,
     NextStepPlan,
     TextPerceive,
     Workflow,
@@ -12,7 +11,10 @@ from agentic_sdk import (
 
 from src.config import Settings, load_settings
 from src.faiss_knowledge_base import FmeaFaissKnowledgeBase
+from src.fmea_query import FmeaQueryService
+from src.fmea_tools import FMEA_TOOLS, FmeaToolDispatcher
 from src.process_retrieve import ProcessAwareFmeaRetrieve
+from src.tool_action import FmeaToolAction
 
 
 ACTION_SYSTEM_PROMPT = """你是公司內部 FMEA 智慧顧問。
@@ -34,10 +36,12 @@ ACTION_SYSTEM_PROMPT = """你是公司內部 FMEA 智慧顧問。
 - 一般問題原則上控制在 250 個中文字以內；跨製程比較可稍長，但避免逐筆列出所有紀錄。
 
 當問題涉及公司內部 FMEA：
-1. 只能根據 retrieved_context 中的 FMEA 紀錄回答。
+1. 只能根據 retrieved_context 或 tool result 中的 FMEA 紀錄回答。
 2. 不可捏造不存在的失效模式、原因、控制措施、建議措施或數值。
 3. 數字必須保留原始值。
 4. 資料不足時，只需簡短說明「現有 FMEA 資料不足以回答此問題」。
+5. 數值門檻、數值範圍、排序、計數、指定 document ID 或要求列出符合條件的紀錄時，必須呼叫 query_fmea_records。
+6. query_fmea_records 最多回傳 20 筆；如果 has_more=true，要說明只顯示前 20 筆以及完整符合筆數。
 
 當問題只是一般 FMEA 知識：
 1. 可以使用一般知識回答。
@@ -64,8 +68,9 @@ def _perceive_guidance(process_codes: list[str]) -> str:
     return f"""請分類 FMEA 問題，只回傳 intent、summary、details。
 intent 必須等於 details.query_type。
 details 必須包含 query_type、processes、cross_table、complexity。
-query_type 只能是 general_knowledge、internal_fmea、cross_table。
+query_type 只能是 general_knowledge、internal_fmea、structured_fmea、cross_table。
 一般 FMEA 定義或計算問題使用 general_knowledge，processes=[]，cross_table=false，complexity=small。
+涉及 S/O/D/RPN 門檻、範圍、排序、計數、指定 document ID，或列出所有符合條件紀錄時使用 structured_fmea。
 指定一個公司製程使用 internal_fmea；指定多個製程比較使用 cross_table。
 未指定製程但詢問公司失效資料時使用 internal_fmea、processes=[]、cross_table=true、complexity=medium。
 可用製程代碼：{available}。
@@ -75,6 +80,7 @@ processes 只能使用上述代碼。不要輸出推理過程。"""
 PLAN_SYSTEM_PROMPT = """PLAN. Return JSON with fields thought and next_module.
 thought 只能是一個簡短的路由標籤，不可輸出推理過程。
 perceived_intent=general_knowledge 時 next_module=action。
+perceived_intent=structured_fmea 時 next_module=action。
 perceived_intent=internal_fmea 或 cross_table 時 next_module=retrieve。
 next_module 只能是 retrieve 或 action。"""
 
@@ -85,6 +91,8 @@ def build_workflow(
 ) -> Workflow:
     settings = settings or load_settings(require_chat=True, require_embedding=False)
     process_codes = sorted(knowledge_bases)
+    query_service = FmeaQueryService(knowledge_bases)
+    tool_dispatcher = FmeaToolDispatcher(query_service)
     return Workflow(
         workflow_name="FMEA智慧顧問",
         description=(
@@ -94,7 +102,15 @@ def build_workflow(
         perceive=TextPerceive(
             welcome_message=_perceive_guidance(process_codes),
             options=[
-                {"name": "query_type", "values": ["general_knowledge", "internal_fmea", "cross_table"]},
+                {
+                    "name": "query_type",
+                    "values": [
+                        "general_knowledge",
+                        "internal_fmea",
+                        "structured_fmea",
+                        "cross_table",
+                    ],
+                },
                 {"name": "processes", "values": process_codes},
                 {"name": "cross_table", "type": "boolean"},
                 {"name": "complexity", "values": ["small", "medium", "large"]},
@@ -114,11 +130,13 @@ def build_workflow(
             retrieve_description=RETRIEVE_DESCRIPTION,
         ),
         retrieve=ProcessAwareFmeaRetrieve(knowledge_bases=knowledge_bases),
-        action=GenerativeAction(
+        action=FmeaToolAction(
             api_key=settings.chat_api_key,
             base_url=settings.chat_base_url,
             model=settings.chat_model,
             system_prompt=ACTION_SYSTEM_PROMPT,
+            tools=FMEA_TOOLS,
+            dispatcher=tool_dispatcher,
         ),
         reflect=EvidenceCheckReflect(on_failure="end"),
         events_schema=EVENTS_SCHEMA,
