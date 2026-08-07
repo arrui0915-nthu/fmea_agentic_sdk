@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from html import escape
 import uuid
 
 import streamlit as st
@@ -13,9 +14,67 @@ from src.faiss_knowledge_base import (
     load_existing_knowledge_bases,
 )
 from src.workflow import build_workflow
+from src.ui_stream import WorkflowUiStream
 
 
 st.set_page_config(page_title="FMEA 智慧顧問", page_icon="🔎", layout="wide")
+
+st.markdown(
+    """
+    <style>
+        .stAppViewContainer > .main .block-container {
+            max-width: 960px;
+            padding-top: 2.5rem;
+            padding-bottom: 4rem;
+        }
+        [data-testid="stHeader"] {
+            background: transparent;
+        }
+        section[data-testid="stSidebar"] {
+            border-right: 1px solid color-mix(in srgb, var(--text-color) 12%, transparent);
+        }
+        [data-testid="stChatMessage"] {
+            border: 1px solid color-mix(in srgb, var(--text-color) 10%, transparent);
+            border-radius: 18px;
+            padding: 0.4rem 0.75rem;
+            margin-bottom: 0.75rem;
+        }
+        .kb-list {
+            display: flex;
+            flex-direction: column;
+            gap: 0.55rem;
+            margin: 1rem 0 1.5rem;
+        }
+        .kb-item {
+            display: flex;
+            align-items: center;
+            gap: 0.6rem;
+            padding: 0.65rem 0.75rem;
+            border: 1px solid color-mix(in srgb, var(--text-color) 10%, transparent);
+            border-radius: 12px;
+            background: color-mix(in srgb, var(--secondary-background-color) 88%, transparent);
+            font-weight: 600;
+        }
+        .kb-dot {
+            width: 0.55rem;
+            height: 0.55rem;
+            flex: 0 0 0.55rem;
+            border-radius: 999px;
+            background: #22c55e;
+            box-shadow: 0 0 0 3px color-mix(in srgb, #22c55e 18%, transparent);
+        }
+        .kb-ready {
+            margin-left: auto;
+            color: #16a34a;
+            font-size: 0.72rem;
+            font-weight: 700;
+            letter-spacing: 0.02em;
+            text-transform: uppercase;
+        }
+    </style>
+    """,
+    unsafe_allow_html=True,
+)
 
 
 def _initialise() -> None:
@@ -57,10 +116,23 @@ except Exception as exc:
 
 
 with st.sidebar:
-    st.subheader("已載入知識庫")
-    for process_code, knowledge_base in st.session_state.knowledge_bases.items():
-        st.write(f"- {process_code}：{len(knowledge_base.documents)} rows")
-    if st.button("清除對話", use_container_width=True):
+    st.subheader("Knowledge bases")
+    st.caption("目前可供 Agent 檢索的製程知識庫")
+    knowledge_base_items = "".join(
+        (
+            '<div class="kb-item">'
+            '<span class="kb-dot"></span>'
+            f"<span>{escape(process_code)}</span>"
+            '<span class="kb-ready">Available</span>'
+            "</div>"
+        )
+        for process_code in sorted(st.session_state.knowledge_bases)
+    )
+    st.markdown(
+        f'<div class="kb-list">{knowledge_base_items}</div>',
+        unsafe_allow_html=True,
+    )
+    if st.button("🗑️ 清除對話", use_container_width=True):
         st.session_state.messages = []
         st.session_state.session_id = uuid.uuid4().hex
         del st.session_state.workflow
@@ -68,7 +140,7 @@ with st.sidebar:
 
 
 st.title("FMEA 智慧顧問")
-st.caption("使用 Agentic SDK 選擇製程知識庫，並將相關 FMEA rows 整理成精簡回答。")
+st.caption("從可用的製程知識庫中搜尋相關 FMEA 資訊，整理成清楚、精簡的回答。")
 
 for message in st.session_state.messages:
     with st.chat_message(message["role"]):
@@ -81,33 +153,53 @@ if user_message:
         st.markdown(user_message)
 
     with st.chat_message("assistant"):
-        stage_status = st.status("Agent 執行中", expanded=True)
+        stage_status = st.status("正在準備…", expanded=False)
 
         def on_event(event: dict) -> None:
-            if event.get("type") != "stage":
-                return
             label = event.get("label") or event.get("module")
             phase = event.get("phase")
             if phase == "start":
-                stage_status.write(f"⏳ {label}")
+                stage_status.update(
+                    label=f"{label}…",
+                    state="running",
+                    expanded=False,
+                )
             elif phase == "finish":
-                stage_status.write(f"✅ {label}")
+                stage_status.update(
+                    label=f"{label}完成",
+                    state="complete",
+                    expanded=False,
+                )
             elif phase == "abort":
-                stage_status.write(f"❌ {label}")
+                stage_status.update(
+                    label=f"{label}失敗",
+                    state="error",
+                    expanded=False,
+                )
+
+        def answer_deltas(ui_stream: WorkflowUiStream):
+            for event in ui_stream:
+                if event.kind == "stage":
+                    on_event(event.payload)
+                else:
+                    yield event.payload
 
         try:
-            result = st.session_state.workflow.run(
+            ui_stream = WorkflowUiStream(
+                st.session_state.workflow,
                 user_message,
-                session_id=st.session_state.session_id,
-                event_callback=on_event,
+                st.session_state.session_id,
             )
+            streamed_message = st.write_stream(answer_deltas(ui_stream))
+            result = ui_stream.result
             final_message = result.final_message or "沒有可顯示的回答。"
             stage_status.update(
                 label="處理完成",
                 state="complete",
                 expanded=False,
             )
-            st.markdown(final_message)
+            if not streamed_message:
+                st.markdown(final_message)
         except Exception as exc:
             stage_status.update(
                 label="處理失敗",
