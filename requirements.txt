@@ -1,0 +1,8 @@
+agentic-sdk @ git+https://github.com/R300-AI/Agentic-SDK.git@c30e449d5cb781fa541311dd31203fdadeedf354
+faiss-cpu==1.12.0
+numpy>=1.26,<3
+openai==2.41.1
+openpyxl>=3.1,<4
+python-dotenv>=1.2,<2
+streamlit>=1.61,<2
+pytest>=8,<9
