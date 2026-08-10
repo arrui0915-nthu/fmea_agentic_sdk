@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from agentic_sdk import (
-    EvidenceCheckReflect,
     NextStepPlan,
     TextPerceive,
     Workflow,
@@ -12,6 +11,7 @@ from agentic_sdk import (
 from src.config import Settings, load_settings
 from src.faiss_knowledge_base import FmeaFaissKnowledgeBase
 from src.fmea_query import FmeaQueryService
+from src.fmea_reflect import FmeaAutoCorrectReflect
 from src.fmea_tools import FMEA_TOOLS, FmeaToolDispatcher
 from src.process_retrieve import ProcessAwareFmeaRetrieve
 from src.tool_action import FmeaToolAction
@@ -147,6 +147,11 @@ def build_workflow(
             dispatcher=tool_dispatcher,
             available_processes=process_codes,
         ),
-        reflect=EvidenceCheckReflect(on_failure="end"),
+        reflect=FmeaAutoCorrectReflect(
+            api_key=settings.chat_api_key,
+            base_url=settings.chat_base_url,
+            model=settings.chat_model,
+            max_corrections=1,
+        ),
         events_schema=EVENTS_SCHEMA,
     )

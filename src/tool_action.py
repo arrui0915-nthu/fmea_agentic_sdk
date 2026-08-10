@@ -239,6 +239,27 @@ def _build_messages(
 ) -> list[dict[str, Any]]:
     retrieved = state.lookup("latest_retrieved_content") or state.lookup("retrieved_snippet") or ""
     perceived_details = state.lookup("perceived_details") or {}
+    correction = state.lookup("reflect_correction")
+    correction_context: dict[str, Any] = {}
+    if isinstance(correction, dict):
+        previous_result = state.last_action_result or {}
+        correction_context = {
+            "auto_correction_instruction": (
+                "上一版回答未通過 Reflect。請依 correction_reason 與 "
+                "correction_suggestion 重新產生完整最終答案，只輸出修正版。"
+            ),
+            "correction_attempt": correction.get("attempt"),
+            "correction_reason": correction.get("reason"),
+            "correction_suggestion": correction.get("suggestion"),
+            "previous_answer": correction.get("previous_answer")
+            or previous_result.get("content")
+            or "",
+            "previous_tool_results": json.dumps(
+                previous_result.get("tool_results") or [],
+                ensure_ascii=False,
+                default=str,
+            )[:12000],
+        }
     return build_module_messages(
         state.memory,
         system_prompt=system_prompt,
@@ -247,6 +268,7 @@ def _build_messages(
             "perceived_summary": state.lookup("perceived_summary") or "",
             "perceived_details": json.dumps(perceived_details, ensure_ascii=False),
             "retrieved_context": retrieved,
+            **correction_context,
         },
         latest_user_message=state.latest_user_message(),
     )

@@ -4,7 +4,7 @@ from typing import Any
 from agentic_sdk import WorkflowState
 from agentic_sdk.llm import OpenAIChatResponse
 
-from src.tool_action import FmeaToolAction
+from src.tool_action import FmeaToolAction, _build_messages
 
 
 class FakeDispatcher:
@@ -208,3 +208,31 @@ def test_tool_failure_is_returned_to_model_instead_of_executing_unknown_code() -
     assert tool_result["ok"] is False
     assert dispatcher.calls == []
     assert output["payload"]["latest_final_message"] == "查詢條件格式錯誤。"
+
+
+def test_action_messages_include_reflect_correction_feedback() -> None:
+    state = WorkflowState(user_message="查詢高風險項目")
+    state.entities.update(
+        {
+            "reflect_correction": {
+                "attempt": 1,
+                "reason": "回答筆數與工具結果不一致",
+                "suggestion": "使用 total_matches 的正確數值",
+                "previous_answer": "共有 2 筆",
+            },
+            "perceived_intent": "structured_fmea",
+        }
+    )
+    state.last_action_result = {
+        "content": "共有 2 筆",
+        "tool_results": [{"result": {"data": {"total_matches": 3}}}],
+    }
+
+    messages = _build_messages(state, "system")
+
+    system_message = messages[0]["content"]
+    assert "上一版回答未通過 Reflect" in system_message
+    assert "回答筆數與工具結果不一致" in system_message
+    assert "使用 total_matches 的正確數值" in system_message
+    assert "共有 2 筆" in system_message
+    assert "total_matches" in system_message

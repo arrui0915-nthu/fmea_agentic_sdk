@@ -9,6 +9,8 @@ from typing import Any, Literal
 
 from agentic_sdk import WorkflowResult
 
+from src.agent_trace import AgentTraceRecorder
+
 
 @dataclass(frozen=True, slots=True)
 class UiStreamEvent:
@@ -34,6 +36,7 @@ class WorkflowUiStream:
         self._result: WorkflowResult | None = None
         self._error: BaseException | None = None
         self._finished = False
+        self._trace_recorder = AgentTraceRecorder()
 
     @property
     def result(self) -> WorkflowResult:
@@ -44,6 +47,12 @@ class WorkflowUiStream:
         if self._result is None:
             raise RuntimeError("WorkflowUiStream completed without a result.")
         return self._result
+
+    @property
+    def trace(self) -> dict[str, Any]:
+        """Return the current serialisable Agent execution trace."""
+
+        return self._trace_recorder.snapshot
 
     def __iter__(self) -> WorkflowUiStream:
         self._start()
@@ -78,7 +87,8 @@ class WorkflowUiStream:
     def _consume_sdk_stream(self) -> None:
         def enqueue_event(event: dict[str, Any]) -> None:
             if event.get("type") == "stage":
-                self._events.put(("stage", event))
+                public_event = self._trace_recorder.record_stage(event)
+                self._events.put(("stage", public_event))
                 return
             if event.get("type") != "token_delta" or event.get("module") != "action":
                 return
@@ -102,6 +112,8 @@ class WorkflowUiStream:
             for delta in sdk_stream:
                 if delta:
                     self._events.put(("text", str(delta)))
+            self._trace_recorder.finish()
             self._events.put(("done", sdk_stream.result))
         except BaseException as exc:
+            self._trace_recorder.finish(failed=True, reason=str(exc))
             self._events.put(("error", exc))

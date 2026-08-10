@@ -15,9 +15,29 @@ class FakeSdkStream:
         self.result = FakeResult(final_message="完整回答")
 
     def __iter__(self):
-        self._callback({"type": "stage", "phase": "start", "label": "分析問題"})
+        self._callback(
+            {
+                "type": "stage",
+                "phase": "start",
+                "module": "perceive",
+                "visit_count": 1,
+                "visit_id": "workflow:perceive:1",
+                "label": "分析問題",
+            }
+        )
         self._callback({"type": "token_delta", "module": "action", "content": "完整"})
-        self._callback({"type": "stage", "phase": "finish", "label": "分析問題"})
+        self._callback(
+            {
+                "type": "stage",
+                "phase": "finish",
+                "module": "perceive",
+                "visit_count": 1,
+                "visit_id": "workflow:perceive:1",
+                "label": "分析問題",
+                "fields": [{"field": "intent", "value": "internal_fmea"}],
+                "next_module": "action",
+            }
+        )
         self._callback({"type": "token_delta", "module": "action", "content": "回答"})
         return
         yield  # pragma: no cover - keeps this method an iterator
@@ -36,10 +56,17 @@ def test_ui_stream_forwards_stage_events_and_text_deltas() -> None:
 
     events = list(stream)
 
-    assert [(event.kind, event.payload) for event in events] == [
-        ("stage", {"type": "stage", "phase": "start", "label": "分析問題"}),
-        ("text", "完整"),
-        ("stage", {"type": "stage", "phase": "finish", "label": "分析問題"}),
-        ("text", "回答"),
+    assert [event.kind for event in events] == ["stage", "text", "stage", "text"]
+    assert events[0].payload["phase"] == "start"
+    assert events[0].payload["module"] == "perceive"
+    assert events[1].payload == "完整"
+    assert events[2].payload["phase"] == "finish"
+    assert events[2].payload["fields"] == [
+        {"field": "intent", "value": "internal_fmea"}
     ]
+    assert events[2].payload["next_module"] == "action"
+    assert events[3].payload == "回答"
     assert stream.result.final_message == "完整回答"
+    assert stream.trace["status"] == "complete"
+    assert stream.trace["stages"][0]["status"] == "complete"
+    assert all(stage["status"] == "skipped" for stage in stream.trace["stages"][1:])
