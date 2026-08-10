@@ -71,6 +71,10 @@ streamlit run app.py
 
 Streamlit 啟動時只載入索引，不會自動建立或呼叫大量 embedding API。若索引不存在，請先執行 `python build_indexes.py`。
 
+## 從聊天建立 FMEA Preview
+
+「從聊天建立 FMEA」分頁可貼上聊天內容，或上傳 UTF-8 `.txt`／`.md`，再選擇要比對的製程與相似度門檻。系統會排除與既有資料過度相似的 rows，並提供其餘 rows 的 `.xlsx` 預覽檔。此流程只讀取已載入的 FAISS indexes，不會修改 Excel、Markdown 或索引。
+
 ## 索引選擇
 
 - 指定一個製程：只搜尋該製程，每個 index 取自己的 Top-K。
