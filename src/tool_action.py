@@ -32,6 +32,7 @@ class FmeaToolAction:
         system_prompt: str,
         tools: list[dict[str, Any]],
         dispatcher: FmeaToolDispatcher,
+        available_processes: list[str] | None = None,
         client: Any | None = None,
         chat_runner: ChatRunner = chat_stream,
     ) -> None:
@@ -45,6 +46,11 @@ class FmeaToolAction:
         )
         self._tools = list(tools)
         self._dispatcher = dispatcher
+        self._available_processes = sorted(
+            str(process).strip().upper()
+            for process in (available_processes or [])
+            if str(process).strip()
+        )
         self._chat_runner = chat_runner
 
     @property
@@ -52,6 +58,44 @@ class FmeaToolAction:
         return self._model
 
     def __call__(self, state: WorkflowState) -> ModuleOutput:
+        if _needs_process_clarification(state):
+            content = _process_clarification_message(
+                state.lookup("available_processes") or self._available_processes
+            )
+            state.emit_token_delta(
+                self.name,
+                content,
+                metadata={"model": self._model, "structured": False},
+            )
+            state.last_action_error = None
+            state.last_action_result = {
+                "content": content,
+                "model": self._model,
+                "tool_calls": [],
+                "tool_results": [],
+            }
+            return ModuleOutput(
+                next_module=None,
+                payload={
+                    "latest_final_message": content,
+                    "latest_tool_calls": [],
+                    "latest_tool_results": [],
+                    "_llm_usage": _combined_usage([], self._model),
+                },
+                context_updates=[
+                    ContextEntry(
+                        type=ContextEntryType.ACTION_RESULT,
+                        content=content,
+                        metadata={
+                            "ok": True,
+                            "model": self._model,
+                            "tool_names": [],
+                            "needs_process_clarification": True,
+                        },
+                    )
+                ],
+            )
+
         messages = _build_messages(state, self._system_prompt)
         responses: list[OpenAIChatResponse] = []
         try:
@@ -206,6 +250,36 @@ def _build_messages(
         },
         latest_user_message=state.latest_user_message(),
     )
+
+
+def _needs_process_clarification(state: WorkflowState) -> bool:
+    if bool(state.lookup("needs_process_clarification")):
+        return True
+
+    details = state.lookup("perceived_details") or {}
+    if not isinstance(details, dict):
+        return False
+    query_type = str(details.get("query_type") or state.lookup("perceived_intent") or "")
+    if query_type not in {"internal_fmea", "structured_fmea"}:
+        return False
+    processes = details.get("processes") or []
+    has_process = isinstance(processes, list) and any(
+        str(process).strip() for process in processes
+    )
+    return not has_process and not bool(details.get("cross_table"))
+
+
+def _process_clarification_message(processes: object) -> str:
+    if isinstance(processes, (list, tuple, set)):
+        available = [str(process).strip() for process in processes if str(process).strip()]
+    else:
+        available = []
+    if available:
+        return (
+            "這類原因會因製程與設備步驟不同而異。請問是在哪一個製程發生？"
+            f"目前可查詢：{'、'.join(available)}。"
+        )
+    return "這類原因會因製程與設備步驟不同而異。請問是在哪一個製程發生？"
 
 
 def _normalize_tool_calls(raw_calls: object) -> list[dict[str, Any]]:

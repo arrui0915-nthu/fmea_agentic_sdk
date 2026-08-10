@@ -52,6 +52,22 @@ class ProcessAwareFmeaRetrieve:
                 context_updates=[],
             )
 
+        if not requested_processes and not cross_table:
+            return ModuleOutput(
+                next_module="action",
+                payload={
+                    "needs_process_clarification": True,
+                    "available_processes": sorted(self.knowledge_bases),
+                    "retrieved_snippet": "",
+                    "latest_retrieved_content": "",
+                    "retrieval_processes": [],
+                    "retrieval_top_k": top_k,
+                    "retrieval_hit_count": 0,
+                    "retrieval_selected_sources": [],
+                },
+                context_updates=[],
+            )
+
         selected_processes = self._select_processes(requested_processes)
         query = str(
             state.lookup("perceived_summary") or state.latest_user_message()

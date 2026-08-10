@@ -28,7 +28,13 @@ class FakeKnowledgeBase:
         ]
 
 
-def _state(processes: list[str], query_type: str = "internal_fmea", complexity: str = "small") -> WorkflowState:
+def _state(
+    processes: list[str],
+    query_type: str = "internal_fmea",
+    complexity: str = "small",
+    *,
+    cross_table: bool | None = None,
+) -> WorkflowState:
     state = WorkflowState(user_message="查詢失效原因")
     state.entities.update(
         {
@@ -36,7 +42,7 @@ def _state(processes: list[str], query_type: str = "internal_fmea", complexity: 
             "perceived_details": {
                 "query_type": query_type,
                 "processes": processes,
-                "cross_table": len(processes) > 1,
+                "cross_table": len(processes) > 1 if cross_table is None else cross_table,
                 "complexity": complexity,
             },
         }
@@ -50,7 +56,6 @@ def _state(processes: list[str], query_type: str = "internal_fmea", complexity: 
         (["PVD"], {"PVD"}),
         (["PI"], {"PI"}),
         (["PVD", "PI"], {"PVD", "PI"}),
-        ([], {"PVD", "PI", "ECD"}),
     ],
 )
 def test_retrieve_selects_only_expected_indexes(processes: list[str], expected: set[str]) -> None:
@@ -62,6 +67,29 @@ def test_retrieve_selects_only_expected_indexes(processes: list[str], expected: 
     assert output["next_module"] == "action"
     assert output["payload"]["retrieval_hit_count"] == len(expected)
     assert set(output["payload"]["retrieval_selected_sources"]) == expected
+
+
+def test_unspecified_process_requests_clarification_without_searching() -> None:
+    knowledge_bases = {code: FakeKnowledgeBase(code) for code in ("PVD", "PI", "ECD")}
+
+    output = ProcessAwareFmeaRetrieve(knowledge_bases)(_state([]))
+
+    assert not any(kb.calls for kb in knowledge_bases.values())
+    assert output["next_module"] == "action"
+    assert output["payload"]["needs_process_clarification"] is True
+    assert output["payload"]["available_processes"] == ["ECD", "PI", "PVD"]
+    assert output["payload"]["retrieval_hit_count"] == 0
+
+
+def test_explicit_all_processes_searches_all_indexes() -> None:
+    knowledge_bases = {code: FakeKnowledgeBase(code) for code in ("PVD", "PI", "ECD")}
+
+    output = ProcessAwareFmeaRetrieve(knowledge_bases)(
+        _state([], query_type="cross_table", cross_table=True)
+    )
+
+    assert all(kb.calls for kb in knowledge_bases.values())
+    assert set(output["payload"]["retrieval_selected_sources"]) == {"PVD", "PI", "ECD"}
 
 
 def test_general_knowledge_skips_all_indexes() -> None:

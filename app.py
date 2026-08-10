@@ -24,15 +24,17 @@ from src.ui_stream import WorkflowUiStream
 from src.workflow import build_workflow
 
 
-st.set_page_config(page_title="FMEA 智慧顧問", page_icon="🔎", layout="wide")
+st.set_page_config(page_title="FMEA 智慧顧問", page_icon="🔎", layout="centered")
 
 st.markdown(
     """
     <style>
-        .stAppViewContainer > .main .block-container {
-            max-width: 960px;
-            padding-top: 2.5rem;
-            padding-bottom: 4rem;
+        [data-testid="stAppViewContainer"] .main .block-container,
+        [data-testid="stMainBlockContainer"] {
+            width: 100%;
+            max-width: 900px;
+            padding-top: 2rem;
+            padding-bottom: 5rem;
         }
         [data-testid="stHeader"] {
             background: transparent;
@@ -41,10 +43,29 @@ st.markdown(
             border-right: 1px solid color-mix(in srgb, var(--text-color) 12%, transparent);
         }
         [data-testid="stChatMessage"] {
-            border: 1px solid color-mix(in srgb, var(--text-color) 10%, transparent);
-            border-radius: 18px;
-            padding: 0.4rem 0.75rem;
-            margin-bottom: 0.75rem;
+            align-items: flex-start;
+            gap: 0.75rem;
+            padding: 0.9rem 0;
+            margin-bottom: 0.25rem;
+            background: transparent;
+        }
+        [data-testid="stChatMessage"] > div:last-child,
+        [data-testid="stChatMessageContent"] {
+            min-width: 0;
+            overflow-wrap: anywhere;
+        }
+        [data-testid="stChatMessage"] table {
+            display: block;
+            max-width: 100%;
+            overflow-x: auto;
+            white-space: nowrap;
+        }
+        [data-testid="stBottomBlockContainer"],
+        [data-testid="stChatInput"] {
+            width: 100%;
+            max-width: 900px;
+            margin-left: auto;
+            margin-right: auto;
         }
         .kb-list {
             display: flex;
@@ -78,10 +99,31 @@ st.markdown(
             letter-spacing: 0.02em;
             text-transform: uppercase;
         }
+        @media (max-width: 640px) {
+            [data-testid="stAppViewContainer"] .main .block-container,
+            [data-testid="stMainBlockContainer"] {
+                padding-top: 1rem;
+                padding-left: 0.75rem;
+                padding-right: 0.75rem;
+            }
+            [data-testid="stChatMessage"] {
+                gap: 0.5rem;
+                padding: 0.7rem 0;
+            }
+        }
     </style>
     """,
     unsafe_allow_html=True,
 )
+
+
+def _clear_conversation_state() -> None:
+    st.session_state.messages = []
+    st.session_state.session_id = uuid.uuid4().hex
+    st.session_state.pop("workflow", None)
+    st.session_state.pop("preview_chat_text", None)
+    st.session_state.pop("preview_chat_file", None)
+    st.session_state.pop("preview_result", None)
 
 
 def _initialise() -> None:
@@ -124,6 +166,12 @@ except Exception as exc:
 
 
 with st.sidebar:
+    active_page = st.radio(
+        "功能",
+        ("💬 FMEA 智慧顧問", "📄 從聊天建立 FMEA"),
+        key="active_page",
+    )
+    st.divider()
     st.subheader("Knowledge bases")
     st.caption("目前可供 Agent 檢索的製程知識庫")
     knowledge_base_items = "".join(
@@ -140,11 +188,11 @@ with st.sidebar:
         f'<div class="kb-list">{knowledge_base_items}</div>',
         unsafe_allow_html=True,
     )
-    if st.button("🗑️ 清除對話", use_container_width=True):
-        st.session_state.messages = []
-        st.session_state.session_id = uuid.uuid4().hex
-        del st.session_state.workflow
-        st.rerun()
+    st.button(
+        "🗑️ 清除對話",
+        use_container_width=True,
+        on_click=_clear_conversation_state,
+    )
 
 
 def _update_stage_status(stage_status, event: dict) -> None:
@@ -178,13 +226,7 @@ def _render_chat_page() -> None:
 
     with st.chat_message("assistant"):
         stage_status = st.status("正在準備…", expanded=False)
-
-        def answer_deltas(ui_stream: WorkflowUiStream):
-            for event in ui_stream:
-                if event.kind == "stage":
-                    _update_stage_status(stage_status, event.payload)
-                else:
-                    yield event.payload
+        answer_placeholder = st.empty()
 
         try:
             ui_stream = WorkflowUiStream(
@@ -192,16 +234,22 @@ def _render_chat_page() -> None:
                 user_message,
                 st.session_state.session_id,
             )
-            streamed_message = st.write_stream(answer_deltas(ui_stream))
+            streamed_chunks: list[str] = []
+            for event in ui_stream:
+                if event.kind == "stage":
+                    _update_stage_status(stage_status, event.payload)
+                    continue
+                streamed_chunks.append(str(event.payload))
+                answer_placeholder.markdown("".join(streamed_chunks) + " ▌")
+
             result = ui_stream.result
             final_message = result.final_message or "沒有可顯示的回答。"
             stage_status.update(label="處理完成", state="complete", expanded=False)
-            if not streamed_message:
-                st.markdown(final_message)
+            answer_placeholder.markdown(final_message)
         except Exception as exc:
             stage_status.update(label="處理失敗", state="error", expanded=True)
             final_message = f"處理失敗：{exc}"
-            st.error(final_message)
+            answer_placeholder.error(final_message)
 
     st.session_state.messages.append(
         {"role": "assistant", "content": final_message}
@@ -352,8 +400,7 @@ def _render_preview_page() -> None:
     _render_preview_result()
 
 
-chat_tab, preview_tab = st.tabs(("FMEA 智慧顧問", "從聊天建立 FMEA"))
-with chat_tab:
+if active_page == "💬 FMEA 智慧顧問":
     _render_chat_page()
-with preview_tab:
+else:
     _render_preview_page()

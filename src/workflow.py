@@ -46,6 +46,10 @@ ACTION_SYSTEM_PROMPT = """你是公司內部 FMEA 智慧顧問。
 當問題只是一般 FMEA 知識：
 1. 可以使用一般知識回答。
 2. 不可聲稱內容是公司內部規範。
+
+當 perceived_details 表示尚未確認製程：
+1. 不可呼叫工具或猜測製程。
+2. 只詢問使用者要查詢哪一個製程；使用者補充製程後，才可查詢公司內部 FMEA。
 """
 
 RETRIEVE_DESCRIPTION = (
@@ -70,9 +74,13 @@ intent 必須等於 details.query_type。
 details 必須包含 query_type、processes、cross_table、complexity。
 query_type 只能是 general_knowledge、internal_fmea、structured_fmea、cross_table。
 一般 FMEA 定義或計算問題使用 general_knowledge，processes=[]，cross_table=false，complexity=small。
+general_knowledge 僅限 FMEA 本身的概念、定義或計算，例如「什麼是 FMEA」或「RPN 如何計算」。
+製造、設備、材料、缺陷、異常、失效原因、控制或改善等專業問題不是 general_knowledge；例如「晶圓破片是什麼原因」應使用 internal_fmea。
 涉及 S/O/D/RPN 門檻、範圍、排序、計數、指定 document ID，或列出所有符合條件紀錄時使用 structured_fmea。
 指定一個公司製程使用 internal_fmea；指定多個製程比較使用 cross_table。
-未指定製程但詢問公司失效資料時使用 internal_fmea、processes=[]、cross_table=true、complexity=medium。
+專業問題未指定製程時，使用 internal_fmea、processes=[]、cross_table=false、complexity=small，讓顧問先追問製程，不可自行選擇或查詢全部製程。
+只有使用者明確要求「全部製程」、「跨製程」或同時指定多個製程時，cross_table 才可為 true；明確要求全部製程時可使用 processes=[]、cross_table=true。
+結合完整對話判斷：若顧問上一輪詢問製程，而使用者本輪補充一個製程代碼，沿用上一輪的專業問題並填入該 processes；summary 必須合併原問題與本輪製程，不能只寫製程代碼。
 可用製程代碼：{available}。
 processes 只能使用上述代碼。不要輸出推理過程。"""
 
@@ -137,6 +145,7 @@ def build_workflow(
             system_prompt=ACTION_SYSTEM_PROMPT,
             tools=FMEA_TOOLS,
             dispatcher=tool_dispatcher,
+            available_processes=process_codes,
         ),
         reflect=EvidenceCheckReflect(on_failure="end"),
         events_schema=EVENTS_SCHEMA,

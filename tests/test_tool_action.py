@@ -121,6 +121,51 @@ def test_action_still_answers_normally_when_model_does_not_call_a_tool() -> None
     assert deltas == ["FMEA 是失效模式與效應分析。"]
 
 
+def test_action_asks_for_process_without_calling_model_or_tool() -> None:
+    dispatcher = FakeDispatcher()
+    requests: list[dict[str, Any]] = []
+    deltas: list[str] = []
+
+    def chat_runner(client: object, **kwargs: Any) -> OpenAIChatResponse:
+        requests.append(kwargs)
+        raise AssertionError("clarification must not call the model")
+
+    action = FmeaToolAction(
+        model="test-model",
+        system_prompt="test",
+        tools=[{"type": "function"}],
+        dispatcher=dispatcher,  # type: ignore[arg-type]
+        available_processes=["PVD", "ECD"],
+        client=object(),
+        chat_runner=chat_runner,
+    )
+    state = WorkflowState(user_message="晶圓破片是什麼原因？")
+    state.entities.update(
+        {
+            "perceived_intent": "internal_fmea",
+            "perceived_details": {
+                "query_type": "internal_fmea",
+                "processes": [],
+                "cross_table": False,
+            },
+        }
+    )
+    state.set_token_delta_callback(
+        lambda module, content, metadata: deltas.append(content)
+    )
+
+    output = action(state)
+
+    assert requests == []
+    assert dispatcher.calls == []
+    assert output["payload"]["latest_tool_calls"] == []
+    assert output["payload"]["latest_final_message"] == (
+        "這類原因會因製程與設備步驟不同而異。請問是在哪一個製程發生？"
+        "目前可查詢：ECD、PVD。"
+    )
+    assert deltas == [output["payload"]["latest_final_message"]]
+
+
 def test_tool_failure_is_returned_to_model_instead_of_executing_unknown_code() -> None:
     dispatcher = FakeDispatcher()
     requests: list[dict[str, Any]] = []
