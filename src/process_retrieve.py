@@ -57,6 +57,8 @@ class ProcessAwareFmeaRetrieve:
                 next_module="action",
                 payload={
                     "needs_process_clarification": True,
+                    "_trace_status": "skipped",
+                    "_trace_reason": "等待指定製程",
                     "available_processes": sorted(self.knowledge_bases),
                     "retrieved_snippet": "",
                     "latest_retrieved_content": "",

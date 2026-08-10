@@ -102,6 +102,29 @@ def test_reflect_pass_ends_workflow_and_clears_correction() -> None:
     assert output["payload"]["reflect_correction_exhausted"] is False
 
 
+def test_reflect_skips_validation_while_waiting_for_process() -> None:
+    state = _state("請指定製程")
+    state.entities.update({"needs_process_clarification": True})
+
+    def unexpected_runner(client: object, **kwargs: Any) -> OpenAIChatResponse:
+        raise AssertionError("補問製程時不應呼叫 Reflect 模型")
+
+    reflect = FmeaAutoCorrectReflect(
+        model="test-model",
+        client=object(),
+        chat_runner=unexpected_runner,
+    )
+
+    output = reflect(state)
+
+    assert output["next_module"] is None
+    assert output["payload"] == {
+        "_trace_status": "skipped",
+        "_trace_reason": "等待指定製程",
+    }
+    assert output["context_updates"] == []
+
+
 def test_failed_reflect_stops_after_correction_limit() -> None:
     state = _state()
     state.entities.update({"reflect_correction_count": 1})

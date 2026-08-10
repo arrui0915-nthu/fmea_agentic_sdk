@@ -116,12 +116,21 @@ class AgentTraceRecorder:
             stage["usage"] = None
             stage["reason"] = None
         elif phase == "finish":
-            stage["status"] = "complete"
-            stage["duration_ms"] = self._duration_ms(visit_id, now)
+            output = event.get("output")
+            trace_status, trace_reason = _output_trace_disposition(output)
+            stage["status"] = trace_status
+            elapsed_ms = self._duration_ms(visit_id, now)
+            stage["duration_ms"] = None if trace_status == "skipped" else elapsed_ms
             stage["next_module"] = _optional_text(event.get("next_module"))
             stage["fields"] = _safe_fields(event.get("fields"))
-            stage["summary"] = _output_summary(event.get("output"))
-            stage["usage"] = _output_usage(event.get("output"))
+            field_names = {str(item["field"]) for item in stage["fields"]}
+            stage["summary"] = {
+                key: value
+                for key, value in _output_summary(output).items()
+                if key not in field_names
+            }
+            stage["usage"] = _output_usage(output)
+            stage["reason"] = trace_reason
             self._add_usage(stage["usage"])
             stage["attempts"].append(_attempt_snapshot(stage))
         elif phase == "abort":
@@ -232,6 +241,16 @@ def _output_usage(output: object) -> dict[str, Any] | None:
         "input_tokens": _safe_int(raw_usage.get("input_tokens")),
         "output_tokens": _safe_int(raw_usage.get("output_tokens")),
     }
+
+
+def _output_trace_disposition(output: object) -> tuple[str, str | None]:
+    payload = _get_value(output, "payload")
+    if not isinstance(payload, Mapping):
+        return "complete", None
+    status = str(payload.get("_trace_status") or "").strip().lower()
+    if status != "skipped":
+        return "complete", None
+    return "skipped", _optional_text(payload.get("_trace_reason"))
 
 
 def _get_value(source: object, key: str) -> object:

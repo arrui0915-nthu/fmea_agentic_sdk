@@ -235,7 +235,9 @@ def _update_stage_status(stage_status, event: dict) -> None:
     if phase == "start":
         stage_status.update(label=f"{label}…", state="running", expanded=False)
     elif phase == "finish":
-        stage_status.update(label=f"{label}完成", state="complete", expanded=False)
+        outcome = event.get("status")
+        suffix = "略過" if outcome == "skipped" else "完成"
+        stage_status.update(label=f"{label}{suffix}", state="complete", expanded=False)
     elif phase == "abort":
         stage_status.update(label=f"{label}失敗", state="error", expanded=False)
 
@@ -341,6 +343,8 @@ def _trace_details(stage: dict) -> list[tuple[str, str]]:
                 continue
             field = str(item.get("field") or "")
             if field == "details" and any(name.startswith("details.") for name in field_names):
+                continue
+            if field == "suggestion" and not str(item.get("value") or "").strip():
                 continue
             label = _TRACE_FIELD_LABELS.get(field, field)
             details.append((label, _format_trace_value(item.get("value"))))

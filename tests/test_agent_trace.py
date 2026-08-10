@@ -98,6 +98,87 @@ def test_trace_marks_unvisited_stages_skipped_and_running_stage_failed() -> None
     assert all(stage["status"] == "skipped" for stage in trace["stages"][1:])
 
 
+def test_trace_honors_explicit_skipped_disposition_from_finished_module() -> None:
+    times = iter([1.0, 1.1, 1.2, 1.3])
+    recorder = AgentTraceRecorder(clock=lambda: next(times))
+    recorder.record_stage(
+        {
+            "phase": "start",
+            "module": "retrieve",
+            "visit_id": "workflow:retrieve:1",
+        }
+    )
+
+    event = recorder.record_stage(
+        {
+            "phase": "finish",
+            "module": "retrieve",
+            "visit_id": "workflow:retrieve:1",
+            "output": SimpleNamespace(
+                payload={
+                    "_trace_status": "skipped",
+                    "_trace_reason": "等待指定製程",
+                },
+                context_updates=[],
+            ),
+        }
+    )
+
+    assert event["status"] == "skipped"
+    assert event["duration_ms"] is None
+    assert event["reason"] == "等待指定製程"
+    assert recorder.snapshot["stages"][2]["status"] == "skipped"
+
+
+def test_trace_deduplicates_structured_fields_from_output_summary() -> None:
+    times = iter([1.0, 1.1, 1.2, 1.3])
+    recorder = AgentTraceRecorder(clock=lambda: next(times))
+    recorder.record_stage(
+        {
+            "phase": "start",
+            "module": "reflect",
+            "visit_id": "workflow:reflect:1",
+        }
+    )
+
+    event = recorder.record_stage(
+        {
+            "phase": "finish",
+            "module": "reflect",
+            "visit_id": "workflow:reflect:1",
+            "fields": [
+                {"field": "verdict", "value": "pass"},
+                {"field": "reason", "value": "回答有資料支持"},
+                {"field": "suggestion", "value": ""},
+            ],
+            "output": SimpleNamespace(
+                payload={},
+                context_updates=[
+                    SimpleNamespace(
+                        metadata={
+                            "verdict": "pass",
+                            "reason": "回答有資料支持",
+                            "suggestion": "",
+                            "strategy": "fmea_auto_correct",
+                            "correction_count": 0,
+                        }
+                    )
+                ],
+            ),
+        }
+    )
+
+    assert event["fields"] == [
+        {"field": "verdict", "value": "pass"},
+        {"field": "reason", "value": "回答有資料支持"},
+        {"field": "suggestion", "value": ""},
+    ]
+    assert event["summary"] == {
+        "strategy": "fmea_auto_correct",
+        "correction_count": 0,
+    }
+
+
 def test_trace_preserves_repeated_reflect_attempts() -> None:
     current = 0.0
 

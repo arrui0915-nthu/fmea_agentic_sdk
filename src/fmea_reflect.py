@@ -65,6 +65,16 @@ class FmeaAutoCorrectReflect:
         return self._model
 
     def __call__(self, state: WorkflowState) -> ModuleOutput:
+        if bool(state.lookup("needs_process_clarification")):
+            return ModuleOutput(
+                next_module=None,
+                payload={
+                    "_trace_status": "skipped",
+                    "_trace_reason": "等待指定製程",
+                },
+                context_updates=[],
+            )
+
         correction_count = _non_negative_int(
             state.lookup("reflect_correction_count")
         )

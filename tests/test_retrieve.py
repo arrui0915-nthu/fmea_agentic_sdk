@@ -77,6 +77,8 @@ def test_unspecified_process_requests_clarification_without_searching() -> None:
     assert not any(kb.calls for kb in knowledge_bases.values())
     assert output["next_module"] == "action"
     assert output["payload"]["needs_process_clarification"] is True
+    assert output["payload"]["_trace_status"] == "skipped"
+    assert output["payload"]["_trace_reason"] == "等待指定製程"
     assert output["payload"]["available_processes"] == ["ECD", "PI", "PVD"]
     assert output["payload"]["retrieval_hit_count"] == 0
 
