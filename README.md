@@ -316,7 +316,7 @@ flowchart TD
     L -- PVD 機台控制 --> R
     R -- 缺少製程 --> C[Action 追問製程]
     R -- 一般 FMEA 證據 --> A
-    R -- machine_control 且有可執行 row --> M[Action 由 LLM 呼叫<br/>apply_machine_action(document_id)]
+    R -- machine_control 且有可執行 row --> M["Action 由 LLM 呼叫<br/>apply_machine_action(document_id)"]
     M --> MS[MachineActionService<br/>驗證本輪 ID、recipe 與冪等]
     MS --> SIM[PvdMachineSimulator<br/>原子套用三個 setpoint]
     SIM --> AM[Action 根據 tool result<br/>回報調整前後值]
