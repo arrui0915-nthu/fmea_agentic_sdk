@@ -435,14 +435,69 @@ def _render_agent_trace_in(placeholder, trace: object) -> None:
         _render_agent_trace(trace)
 
 
+def _report_artifacts(entities: object) -> list[dict[str, str]]:
+    if not isinstance(entities, dict):
+        return []
+    tool_results = entities.get("latest_tool_results")
+    if not isinstance(tool_results, list):
+        return []
+    artifacts: list[dict[str, str]] = []
+    for tool_result in tool_results:
+        if not isinstance(tool_result, dict) or tool_result.get("name") != "generate_session_report":
+            continue
+        result = tool_result.get("result")
+        if not isinstance(result, dict) or result.get("ok") is not True:
+            continue
+        data = result.get("data")
+        artifact = data.get("artifact") if isinstance(data, dict) else None
+        if not isinstance(artifact, dict):
+            continue
+        filename = str(artifact.get("filename") or "conversation_report.html")
+        content = artifact.get("content")
+        if not isinstance(content, str) or not content:
+            continue
+        artifacts.append(
+            {
+                "filename": filename,
+                "mime_type": str(artifact.get("mime_type") or "text/html"),
+                "content": content,
+            }
+        )
+    return artifacts
+
+
+def _render_report_artifacts(
+    artifacts: object,
+    *,
+    key_prefix: str,
+) -> None:
+    if not isinstance(artifacts, list):
+        return
+    for index, artifact in enumerate(artifacts):
+        if not isinstance(artifact, dict) or not artifact.get("content"):
+            continue
+        st.download_button(
+            "⬇️ 下載本次對話摘要報告",
+            data=artifact["content"],
+            file_name=str(artifact.get("filename") or "conversation_report.html"),
+            mime=str(artifact.get("mime_type") or "text/html"),
+            type="primary",
+            key=f"{key_prefix}-report-{index}",
+        )
+
+
 def _render_chat_page() -> None:
     st.title("FMEA 智慧顧問")
     st.caption("從可用的製程知識庫中搜尋相關 FMEA 資訊，整理成清楚、精簡的回答。")
 
-    for message in st.session_state.messages:
+    for message_index, message in enumerate(st.session_state.messages):
         with st.chat_message(message["role"]):
             st.markdown(message["content"])
             if message["role"] == "assistant":
+                _render_report_artifacts(
+                    message.get("artifacts"),
+                    key_prefix=f"history-{message_index}",
+                )
                 _render_agent_trace(message.get("trace"))
 
     user_message = st.chat_input("請輸入 FMEA 問題")
@@ -458,6 +513,7 @@ def _render_chat_page() -> None:
         trace_placeholder = st.empty()
         ui_stream = None
         final_trace = None
+        final_artifacts: list[dict[str, str]] = []
 
         try:
             ui_stream = WorkflowUiStream(
@@ -485,8 +541,13 @@ def _render_chat_page() -> None:
             result = ui_stream.result
             final_message = result.final_message or "沒有可顯示的回答。"
             final_trace = ui_stream.trace
+            final_artifacts = _report_artifacts(result.entities)
             answer_placeholder.markdown(final_message)
             _render_agent_trace_in(trace_placeholder, final_trace)
+            _render_report_artifacts(
+                final_artifacts,
+                key_prefix=f"current-{len(st.session_state.messages)}",
+            )
         except Exception as exc:
             final_message = f"處理失敗：{exc}"
             final_trace = ui_stream.trace if ui_stream is not None else None
@@ -494,7 +555,12 @@ def _render_chat_page() -> None:
             _render_agent_trace_in(trace_placeholder, final_trace)
 
     st.session_state.messages.append(
-        {"role": "assistant", "content": final_message, "trace": final_trace}
+        {
+            "role": "assistant",
+            "content": final_message,
+            "trace": final_trace,
+            "artifacts": final_artifacts,
+        }
     )
 
 

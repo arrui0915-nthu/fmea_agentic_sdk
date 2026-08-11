@@ -119,7 +119,7 @@ class FmeaToolAction:
                 )
                 tool_results: list[dict[str, Any]] = []
             else:
-                tool_results = self._execute_tool_calls(tool_calls)
+                tool_results = self._execute_tool_calls(tool_calls, state=state)
                 messages.append(
                     {
                         "role": "assistant",
@@ -133,7 +133,7 @@ class FmeaToolAction:
                             "role": "tool",
                             "tool_call_id": result["tool_call_id"],
                             "content": json.dumps(
-                                result["result"],
+                                _tool_result_for_model(result["result"]),
                                 ensure_ascii=False,
                                 default=str,
                             ),
@@ -205,6 +205,8 @@ class FmeaToolAction:
     def _execute_tool_calls(
         self,
         tool_calls: list[dict[str, Any]],
+        *,
+        state: WorkflowState,
     ) -> list[dict[str, Any]]:
         results: list[dict[str, Any]] = []
         for call in tool_calls:
@@ -216,7 +218,11 @@ class FmeaToolAction:
                     raise ValueError("tool arguments 必須是 JSON object")
                 result: dict[str, Any] = {
                     "ok": True,
-                    "data": self._dispatcher.execute(name, arguments),
+                    "data": self._dispatcher.execute(
+                        name,
+                        arguments,
+                        conversation=_conversation_transcript(state),
+                    ),
                 }
             except Exception as exc:
                 result = {
@@ -231,6 +237,39 @@ class FmeaToolAction:
                 }
             )
         return results
+
+
+def _conversation_transcript(state: WorkflowState) -> str:
+    if state.memory is not None:
+        transcript = state.memory.as_text_transcript().strip()
+        if transcript:
+            return transcript
+    return f"user: {state.latest_user_message()}"
+
+
+def _tool_result_for_model(result: object) -> object:
+    """Keep downloadable artifact content out of the second model request."""
+
+    if not isinstance(result, dict):
+        return result
+    data = result.get("data")
+    if not isinstance(data, dict):
+        return result
+    artifact = data.get("artifact")
+    if not isinstance(artifact, dict) or "content" not in artifact:
+        return result
+
+    public_artifact = {
+        key: value for key, value in artifact.items() if key != "content"
+    }
+    public_artifact["content_length"] = len(str(artifact.get("content") or ""))
+    return {
+        **result,
+        "data": {
+            **data,
+            "artifact": public_artifact,
+        },
+    }
 
 
 def _build_messages(

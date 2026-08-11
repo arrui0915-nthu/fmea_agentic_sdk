@@ -47,6 +47,12 @@ ACTION_SYSTEM_PROMPT = """你是公司內部 FMEA 智慧顧問。
 1. 可以使用一般知識回答。
 2. 不可聲稱內容是公司內部規範。
 
+當 perceived_intent=conversation_report：
+1. 必須呼叫 generate_session_report，根據完整對話整理報告。
+2. 摘要、發現、行動與待確認事項只能來自對話，不可補充未討論的事實。
+3. 沒有內容的清單傳空陣列，不要為了填滿報告而捏造內容。
+4. Tool 成功後只需簡短告知報告已完成，不要在回答中重複整份報告。
+
 當 perceived_details 表示尚未確認製程：
 1. 不可呼叫工具或猜測製程。
 2. 只詢問使用者要查詢哪一個製程；使用者補充製程後，才可查詢公司內部 FMEA。
@@ -72,7 +78,8 @@ def _perceive_guidance(process_codes: list[str]) -> str:
     return f"""請分類 FMEA 問題，只回傳 intent、summary、details。
 intent 必須等於 details.query_type。
 details 必須包含 query_type、processes、cross_table、complexity。
-query_type 只能是 general_knowledge、internal_fmea、structured_fmea、cross_table。
+query_type 只能是 general_knowledge、internal_fmea、structured_fmea、cross_table、conversation_report。
+使用者明確要求整理、產生、匯出或下載本次對話報告時，使用 conversation_report；processes 可保留對話中已提及的有效製程，cross_table=false，complexity=small。
 一般 FMEA 定義或計算問題使用 general_knowledge，processes=[]，cross_table=false，complexity=small。
 general_knowledge 僅限 FMEA 本身的概念、定義或計算，例如「什麼是 FMEA」或「RPN 如何計算」。
 製造、設備、材料、缺陷、異常、失效原因、控制或改善等專業問題不是 general_knowledge；例如「晶圓破片是什麼原因」應使用 internal_fmea。
@@ -89,6 +96,7 @@ PLAN_SYSTEM_PROMPT = """PLAN. Return JSON with fields thought and next_module.
 thought 只能是一個簡短的路由標籤，不可輸出推理過程。
 perceived_intent=general_knowledge 時 next_module=action。
 perceived_intent=structured_fmea 時 next_module=action。
+perceived_intent=conversation_report 時 next_module=action。
 perceived_intent=internal_fmea 或 cross_table 時 next_module=retrieve。
 next_module 只能是 retrieve 或 action。"""
 
@@ -117,6 +125,7 @@ def build_workflow(
                         "internal_fmea",
                         "structured_fmea",
                         "cross_table",
+                        "conversation_report",
                     ],
                 },
                 {"name": "processes", "values": process_codes},

@@ -11,7 +11,13 @@ class FakeDispatcher:
     def __init__(self) -> None:
         self.calls: list[tuple[str, dict[str, Any]]] = []
 
-    def execute(self, name: str, arguments: dict[str, Any]) -> dict[str, Any]:
+    def execute(
+        self,
+        name: str,
+        arguments: dict[str, Any],
+        *,
+        conversation: str = "",
+    ) -> dict[str, Any]:
         self.calls.append((name, arguments))
         return {
             "total_matches": 1,
@@ -236,3 +242,98 @@ def test_action_messages_include_reflect_correction_feedback() -> None:
     assert "使用 total_matches 的正確數值" in system_message
     assert "共有 2 筆" in system_message
     assert "total_matches" in system_message
+
+
+class FakeReportDispatcher:
+    def __init__(self) -> None:
+        self.conversation = ""
+
+    def execute(
+        self,
+        name: str,
+        arguments: dict[str, Any],
+        *,
+        conversation: str = "",
+    ) -> dict[str, Any]:
+        assert name == "generate_session_report"
+        assert arguments["title"] == "PVD 對話報告"
+        self.conversation = conversation
+        return {
+            "artifact": {
+                "filename": "report.html",
+                "mime_type": "text/html",
+                "content": "<html>download me</html>",
+            }
+        }
+
+
+def test_action_generates_report_from_session_transcript_without_resending_artifact() -> None:
+    from agentic_sdk.memory.in_context import InContextMemory
+
+    dispatcher = FakeReportDispatcher()
+    requests: list[dict[str, Any]] = []
+    responses = iter(
+        [
+            OpenAIChatResponse(
+                content="",
+                model="test-model",
+                tool_calls=[
+                    {
+                        "id": "report-call",
+                        "type": "function",
+                        "function": {
+                            "name": "generate_session_report",
+                            "arguments": json.dumps(
+                                {
+                                    "title": "PVD 對話報告",
+                                    "objective": "整理討論",
+                                    "processes": ["PVD"],
+                                    "executive_summary": "找到高風險項目。",
+                                    "key_findings": [],
+                                    "action_items": [],
+                                    "open_questions": [],
+                                },
+                                ensure_ascii=False,
+                            ),
+                        },
+                    }
+                ],
+            ),
+            OpenAIChatResponse(
+                content="報告已完成，可下載 HTML 檔案。",
+                model="test-model",
+            ),
+        ]
+    )
+
+    def chat_runner(client: object, **kwargs: Any) -> OpenAIChatResponse:
+        requests.append(kwargs)
+        return next(responses)
+
+    memory = InContextMemory()
+    memory.append_message("user", "PVD 有哪些高風險項目？")
+    memory.append_message("assistant", "最高 RPN 為 200。")
+    memory.append_message("user", "幫我產生本次對話報告")
+    state = WorkflowState(
+        user_message="幫我產生本次對話報告",
+        memory=memory,
+    )
+    action = FmeaToolAction(
+        model="test-model",
+        system_prompt="test",
+        tools=[{"type": "function"}],
+        dispatcher=dispatcher,  # type: ignore[arg-type]
+        client=object(),
+        chat_runner=chat_runner,
+    )
+
+    output = action(state)
+
+    assert "PVD 有哪些高風險項目" in dispatcher.conversation
+    assert "最高 RPN 為 200" in dispatcher.conversation
+    raw_artifact = output["payload"]["latest_tool_results"][0]["result"]["data"]["artifact"]
+    assert raw_artifact["content"] == "<html>download me</html>"
+    model_tool_result = json.loads(requests[1]["messages"][-1]["content"])
+    model_artifact = model_tool_result["data"]["artifact"]
+    assert "content" not in model_artifact
+    assert model_artifact["content_length"] == len("<html>download me</html>")
