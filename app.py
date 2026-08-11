@@ -61,6 +61,21 @@ st.markdown(
             min-width: 0;
             overflow-wrap: anywhere;
         }
+        [data-testid="stChatMessageContent"] h1 {
+            margin: 1.25rem 0 0.55rem;
+            font-size: 1.6rem;
+            line-height: 1.3;
+        }
+        [data-testid="stChatMessageContent"] h2 {
+            margin: 1.15rem 0 0.5rem;
+            font-size: 1.4rem;
+            line-height: 1.35;
+        }
+        [data-testid="stChatMessageContent"] h3 {
+            margin: 1rem 0 0.45rem;
+            font-size: 1.2rem;
+            line-height: 1.4;
+        }
         [data-testid="stChatMessage"] table {
             display: block;
             max-width: 100%;

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from agentic_sdk import (
     NextStepPlan,
+    ResponseCheckReflect,
     TextPerceive,
     Workflow,
 )
@@ -11,7 +12,6 @@ from agentic_sdk import (
 from src.config import Settings, load_settings
 from src.faiss_knowledge_base import FmeaFaissKnowledgeBase
 from src.fmea_query import FmeaQueryService
-from src.fmea_reflect import FmeaAutoCorrectReflect
 from src.fmea_tools import FMEA_TOOLS, FmeaToolDispatcher
 from src.machine_action import MachineActionService, PvdMachineSimulator
 from src.process_retrieve import ProcessAwareFmeaRetrieve
@@ -177,11 +177,10 @@ def build_workflow(
             dispatcher=tool_dispatcher,
             available_processes=process_codes,
         ),
-        reflect=FmeaAutoCorrectReflect(
+        reflect=ResponseCheckReflect(
             api_key=settings.chat_api_key,
             base_url=settings.chat_base_url,
             model=settings.chat_model,
-            max_corrections=1,
         ),
         events_schema=EVENTS_SCHEMA,
     )
