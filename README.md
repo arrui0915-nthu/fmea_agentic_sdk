@@ -273,17 +273,21 @@ flowchart TD
     P --> L{Plan}
     L -- 一般知識 --> A[Action 直接回答]
     L -- 精確條件查詢 --> T[Action 呼叫 query_fmea_records]
+    L -- 產生對話報告 --> G[Action 呼叫 generate_session_report]
     L -- 內部或跨製程問題 --> R[Retrieve FAISS Top-K]
     R -- 缺少製程 --> C[Action 追問製程]
     R -- 已取得證據 --> A
     T --> A2[Action 根據 tool result 回答]
+    G --> H[SessionReportService<br/>產生 HTML artifact]
     A --> F[Reflect]
     A2 --> F
+    H --> F
     C --> End[等待下一輪]
     F -- pass --> End2[顯示最終回答]
     F -- fail 且可修正 --> A3[Action 修正版]
     A3 --> F2[Reflect 再檢查]
     F2 --> End2
+    End2 -. 含 report artifact .-> D[Streamlit 顯示 HTML 下載按鈕]
 ```
 
 ### FMEA Preview
