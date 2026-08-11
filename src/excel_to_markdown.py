@@ -33,6 +33,9 @@ STANDARD_FIELDS = [
     "owner_date",
 ]
 
+OPTIONAL_FIELDS = ["machine_action"]
+SOURCE_FIELDS = [*STANDARD_FIELDS, *OPTIONAL_FIELDS]
+
 
 @dataclass(frozen=True)
 class ColumnMapping:
@@ -73,6 +76,9 @@ COLUMN_MAPPINGS: dict[str, ColumnMapping] = {
     "detection_after": ColumnMapping(("偵測度", "探測度", "detection"), occurrence=2),
     "rpn_after": ColumnMapping(("風險等級", "風險優先數", "rpn"), occurrence=2),
     "owner_date": ColumnMapping(("負責人日期", "負責人/日期", "owner date", "responsible person date")),
+    "machine_action": ColumnMapping(
+        ("machine_action", "machine action", "機台動作")
+    ),
 }
 
 HIERARCHICAL_FIELDS = ("process",)
@@ -126,7 +132,9 @@ def detect_fmea_sheet_and_header(workbook: Any) -> tuple[Worksheet, int, dict[st
     for ws in workbook.worksheets:
         for row_number in range(1, min(ws.max_row, 50) + 1):
             column_map = _column_map_for_row(ws, row_number)
-            score = len(column_map)
+            # Optional source fields must not influence which row is recognised as
+            # the workbook's standard FMEA header.
+            score = sum(field in column_map for field in STANDARD_FIELDS)
             if best is None or score > best[0]:
                 best = (score, ws, row_number, column_map)
 
@@ -180,7 +188,7 @@ def read_fmea_rows(excel_path: Path) -> list[FmeaRow]:
 
         for row_number in range(header_row + 1, ws.max_row + 1):
             values: dict[str, str] = {}
-            for field in STANDARD_FIELDS:
+            for field in SOURCE_FIELDS:
                 column = column_map.get(field)
                 raw_value = None
                 if column is not None:
@@ -240,7 +248,7 @@ def render_fmea_markdown(excel_path: Path, rows: list[FmeaRow]) -> str:
         ]
         lines.extend(
             f"- {field}: {_markdown_value(row.values[field])}"
-            for field in STANDARD_FIELDS
+            for field in SOURCE_FIELDS
         )
         lines.extend(("", "<!-- FMEA_ROW_END -->"))
         blocks.append("\n".join(lines))

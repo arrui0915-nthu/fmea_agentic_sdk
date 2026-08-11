@@ -21,6 +21,12 @@ from src.fmea_preview import (
     display_fmea_rows,
     duplicate_rows_for_display,
 )
+from src.machine_action import (
+    PvdMachineSimulator,
+    SETPOINT_IDS,
+    SETPOINT_MAX,
+    SETPOINT_MIN,
+)
 from src.ui_stream import WorkflowUiStream
 from src.workflow import build_workflow
 
@@ -163,6 +169,8 @@ def _initialise() -> None:
         st.session_state.messages = []
     if "session_id" not in st.session_state:
         st.session_state.session_id = uuid.uuid4().hex
+    if "machine_simulator" not in st.session_state:
+        st.session_state.machine_simulator = PvdMachineSimulator()
     settings = load_settings(require_chat=True, require_embedding=True)
     st.session_state.settings = settings
     if "embedding_client" not in st.session_state:
@@ -181,6 +189,7 @@ def _initialise() -> None:
         st.session_state.workflow = build_workflow(
             st.session_state.knowledge_bases,
             settings=settings,
+            machine_simulator=st.session_state.machine_simulator,
         )
 
 
@@ -200,7 +209,7 @@ except Exception as exc:
 with st.sidebar:
     active_page = st.radio(
         "功能",
-        ("💬 FMEA 智慧顧問", "📄 從聊天建立 FMEA"),
+        ("💬 FMEA 智慧顧問", "📄 從聊天建立 FMEA", "⚙️ PVD 模擬機台"),
         key="active_page",
     )
     st.divider()
@@ -708,7 +717,142 @@ def _render_preview_page() -> None:
     _render_preview_result()
 
 
+def _normalise_machine_setpoints(snapshot: dict) -> dict[str, int]:
+    raw_setpoints = snapshot.get("setpoints")
+    if not isinstance(raw_setpoints, dict):
+        raw_setpoints = {}
+
+    setpoints: dict[str, int] = {}
+    for setpoint_id in SETPOINT_IDS:
+        try:
+            value = int(raw_setpoints.get(setpoint_id, SETPOINT_MIN))
+        except (TypeError, ValueError):
+            value = SETPOINT_MIN
+        setpoints[setpoint_id] = max(
+            SETPOINT_MIN,
+            min(SETPOINT_MAX, value),
+        )
+    return setpoints
+
+
+def _sync_machine_widgets(snapshot: dict) -> None:
+    setpoints = _normalise_machine_setpoints(snapshot)
+    revision = snapshot.get("revision")
+    history = snapshot.get("history")
+    marker = (
+        ("revision", revision)
+        if revision is not None
+        else (
+            "state",
+            len(history) if isinstance(history, (list, tuple)) else None,
+            tuple(setpoints.items()),
+        )
+    )
+    force_sync = bool(st.session_state.pop("machine_widget_sync_pending", False))
+    if not force_sync and st.session_state.get("machine_widget_state_marker") == marker:
+        return
+
+    for setpoint_id, value in setpoints.items():
+        st.session_state[f"machine_widget_{setpoint_id}"] = value
+    st.session_state.machine_widget_state_marker = marker
+
+
+def _machine_history_rows(history: object) -> list[dict[str, object]]:
+    if not isinstance(history, (list, tuple)):
+        return []
+
+    rows: list[dict[str, object]] = []
+    for raw_record in reversed(history[-10:]):
+        if not isinstance(raw_record, dict):
+            rows.append({"紀錄": str(raw_record)})
+            continue
+        record: dict[str, object] = {}
+        for key, value in raw_record.items():
+            if isinstance(value, (dict, list, tuple)):
+                record[str(key)] = json.dumps(
+                    value,
+                    ensure_ascii=False,
+                    separators=(", ", ": "),
+                )
+            else:
+                record[str(key)] = value
+        rows.append(record)
+    return rows
+
+
+def _render_machine_page() -> None:
+    st.title("⚙️ PVD 模擬機台")
+    st.caption("模擬三個數值 setpoint；Agent 與本頁操作會更新同一台機台。")
+
+    simulator = st.session_state.machine_simulator
+    snapshot = simulator.snapshot()
+    if not isinstance(snapshot, dict):
+        st.error("無法讀取模擬機台狀態。")
+        return
+
+    _sync_machine_widgets(snapshot)
+    setpoints = _normalise_machine_setpoints(snapshot)
+    machine_id = snapshot.get("machine_id")
+    revision = snapshot.get("revision")
+    status_text = f"機台：{machine_id}" if machine_id else "PVD demo machine"
+    if revision is not None:
+        status_text += f" · Revision {revision}"
+    st.caption(status_text)
+
+    st.subheader("目前機台值")
+    current_columns = st.columns(len(SETPOINT_IDS))
+    for column, setpoint_id in zip(current_columns, SETPOINT_IDS):
+        column.metric(setpoint_id, setpoints[setpoint_id])
+
+    notice = st.session_state.pop("machine_action_notice", None)
+    if notice:
+        st.success(str(notice))
+
+    st.subheader("手動調整")
+    input_columns = st.columns(len(SETPOINT_IDS))
+    for column, setpoint_id in zip(input_columns, SETPOINT_IDS):
+        column.number_input(
+            setpoint_id,
+            min_value=SETPOINT_MIN,
+            max_value=SETPOINT_MAX,
+            step=1,
+            key=f"machine_widget_{setpoint_id}",
+        )
+
+    apply_column, reset_column = st.columns(2)
+    if apply_column.button("手動套用", type="primary", use_container_width=True):
+        requested_setpoints = {
+            setpoint_id: int(st.session_state[f"machine_widget_{setpoint_id}"])
+            for setpoint_id in SETPOINT_IDS
+        }
+        try:
+            simulator.apply_manual(requested_setpoints)
+            st.session_state.machine_widget_sync_pending = True
+            st.session_state.machine_action_notice = "已套用三個 setpoint。"
+            st.rerun()
+        except Exception as exc:
+            st.error(f"套用失敗：{exc}")
+
+    if reset_column.button("重設機台", use_container_width=True):
+        try:
+            simulator.reset()
+            st.session_state.machine_widget_sync_pending = True
+            st.session_state.machine_action_notice = "機台已重設。"
+            st.rerun()
+        except Exception as exc:
+            st.error(f"重設失敗：{exc}")
+
+    st.subheader("最近執行紀錄")
+    history_rows = _machine_history_rows(snapshot.get("history"))
+    if history_rows:
+        st.dataframe(history_rows, use_container_width=True, hide_index=True)
+    else:
+        st.info("尚無執行紀錄。")
+
+
 if active_page == "💬 FMEA 智慧顧問":
     _render_chat_page()
-else:
+elif active_page == "📄 從聊天建立 FMEA":
     _render_preview_page()
+else:
+    _render_machine_page()

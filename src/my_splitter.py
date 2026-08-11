@@ -26,6 +26,10 @@ METADATA_ITEM = re.compile(
     r"^-[ \t]+([a-z][a-z0-9_]*):[ \t]*(.*)$",
     re.MULTILINE,
 )
+MACHINE_ACTION_ITEM = re.compile(
+    r"^-[ \t]+machine_action:[^\r\n]*(?:\r?\n)?",
+    re.MULTILINE,
+)
 
 REQUIRED_SOURCE_METADATA = {
     "process",
@@ -117,9 +121,13 @@ def _parse_document(
             "markdown_file": markdown_path.name,
         }
     )
+    # machine_action is trusted execution metadata, not semantic retrieval text.
+    # Keeping it out of embeddings prevents opaque setpoint JSON from changing
+    # similarity while the Action tool can still resolve it by document ID.
+    retrieval_content = MACHINE_ACTION_ITEM.sub("", content).strip()
     return FmeaDocument(
         document_id=document_id,
-        content=content,
+        content=retrieval_content,
         metadata=metadata,
     )
 

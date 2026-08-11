@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from src.conversation_report import SessionReportService
 from src.fmea_query import FmeaQueryService
+
+if TYPE_CHECKING:
+    from src.machine_action import MachineActionService
 
 
 QUERY_FMEA_RECORDS_TOOL: dict[str, Any] = {
@@ -118,7 +121,34 @@ GENERATE_SESSION_REPORT_TOOL: dict[str, Any] = {
     },
 }
 
-FMEA_TOOLS = [QUERY_FMEA_RECORDS_TOOL, GENERATE_SESSION_REPORT_TOOL]
+APPLY_MACHINE_ACTION_TOOL: dict[str, Any] = {
+    "type": "function",
+    "function": {
+        "name": "apply_machine_action",
+        "description": (
+            "套用本輪已檢索到的 PVD FMEA 記錄所定義的機台 setpoints。"
+            "只在使用者明確要求調整機台時呼叫；不得自行提供或改寫 setpoint。"
+            "同一 workflow 對同一 document_id 的重試具冪等性。"
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "document_id": {
+                    "type": "string",
+                    "description": "本輪檢索結果中的 PVD document ID，例如 PVD-0001。",
+                }
+            },
+            "required": ["document_id"],
+            "additionalProperties": False,
+        },
+    },
+}
+
+FMEA_TOOLS = [
+    QUERY_FMEA_RECORDS_TOOL,
+    GENERATE_SESSION_REPORT_TOOL,
+    APPLY_MACHINE_ACTION_TOOL,
+]
 
 
 class FmeaToolDispatcher:
@@ -128,8 +158,10 @@ class FmeaToolDispatcher:
         self,
         query_service: FmeaQueryService,
         report_service: SessionReportService | None = None,
+        machine_action_service: MachineActionService | None = None,
     ) -> None:
         self._report_service = report_service or SessionReportService()
+        self._machine_action_service = machine_action_service
         self._handlers = {
             "query_fmea_records": query_service.query_records,
             "generate_session_report": self._report_service.generate_session_report,
@@ -141,10 +173,60 @@ class FmeaToolDispatcher:
         arguments: dict[str, Any],
         *,
         conversation: str = "",
+        workflow_id: str = "",
+        retrieved_document_ids: list[str] | None = None,
+        perceived_intent: str = "",
     ) -> dict[str, Any]:
+        if name == "apply_machine_action":
+            return self._apply_machine_action(
+                arguments,
+                workflow_id=workflow_id,
+                retrieved_document_ids=retrieved_document_ids,
+                perceived_intent=perceived_intent,
+            )
+
         handler = self._handlers.get(name)
         if handler is None:
             raise ValueError(f"不允許的工具：{name}")
         if name == "generate_session_report":
             return handler(**arguments, conversation=conversation)
         return handler(**arguments)
+
+    def _apply_machine_action(
+        self,
+        arguments: dict[str, Any],
+        *,
+        workflow_id: str,
+        retrieved_document_ids: list[str] | None,
+        perceived_intent: str,
+    ) -> dict[str, Any]:
+        if self._machine_action_service is None:
+            raise RuntimeError("machine action service is not configured")
+        if perceived_intent != "machine_control":
+            raise PermissionError(
+                "apply_machine_action requires the machine_control intent"
+            )
+        if set(arguments) != {"document_id"}:
+            raise ValueError("apply_machine_action requires only document_id")
+
+        document_id = arguments.get("document_id")
+        if not isinstance(document_id, str) or not document_id.strip():
+            raise ValueError("document_id must be a non-empty string")
+        normalized_document_id = document_id.strip().upper()
+        normalized_workflow_id = str(workflow_id).strip()
+        if not normalized_workflow_id:
+            raise ValueError("workflow_id is required for machine actions")
+
+        allowed_document_ids = [
+            str(candidate).strip().upper()
+            for candidate in (retrieved_document_ids or [])
+            if str(candidate).strip()
+        ]
+        return self._machine_action_service.execute(
+            normalized_document_id,
+            allowed_document_ids=allowed_document_ids,
+            idempotency_key=(
+                f"{normalized_workflow_id}:apply_machine_action:"
+                f"{normalized_document_id}"
+            ),
+        )

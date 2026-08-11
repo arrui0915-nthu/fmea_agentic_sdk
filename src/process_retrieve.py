@@ -44,6 +44,8 @@ class ProcessAwareFmeaRetrieve:
                 payload={
                     "retrieved_snippet": "",
                     "latest_retrieved_content": "",
+                    "retrieval_document_ids": [],
+                    "retrieval_machine_action_document_ids": [],
                     "retrieval_processes": [],
                     "retrieval_top_k": top_k,
                     "retrieval_hit_count": 0,
@@ -62,6 +64,8 @@ class ProcessAwareFmeaRetrieve:
                     "available_processes": sorted(self.knowledge_bases),
                     "retrieved_snippet": "",
                     "latest_retrieved_content": "",
+                    "retrieval_document_ids": [],
+                    "retrieval_machine_action_document_ids": [],
                     "retrieval_processes": [],
                     "retrieval_top_k": top_k,
                     "retrieval_hit_count": 0,
@@ -80,11 +84,27 @@ class ProcessAwareFmeaRetrieve:
             hits.extend((process_code, hit) for hit in process_hits)
 
         snippet = _format_hits(hits)
+        document_ids = list(
+            dict.fromkeys(hit.title for _, hit in hits if str(hit.title).strip())
+        )
+        machine_action_document_ids = list(
+            dict.fromkeys(
+                hit.title
+                for process_code, hit in hits
+                if process_code == "PVD"
+                and _has_machine_action(hit.metadata)
+                and str(hit.title).strip()
+            )
+        )
         return ModuleOutput(
             next_module="action",
             payload={
                 "retrieved_snippet": snippet,
                 "latest_retrieved_content": snippet,
+                "retrieval_document_ids": document_ids,
+                "retrieval_machine_action_document_ids": (
+                    machine_action_document_ids
+                ),
                 "retrieval_processes": selected_processes,
                 "retrieval_top_k": top_k,
                 "retrieval_hit_count": len(hits),
@@ -98,6 +118,8 @@ class ProcessAwareFmeaRetrieve:
                         "processes": selected_processes,
                         "top_k": top_k,
                         "hit_count": len(hits),
+                        "document_ids": document_ids,
+                        "machine_action_document_ids": machine_action_document_ids,
                         "cross_table": cross_table,
                     },
                 )
@@ -131,9 +153,23 @@ def _format_hits(hits: list[tuple[str, RetrievalHit]]) -> str:
                 f"Sheet: {metadata.get('source_sheet', '')}",
                 f"Excel row: {metadata.get('source_excel_row', '')}",
                 f"Score: {hit.score:.4f}",
+                (
+                    "Machine action available: yes"
+                    if process_code == "PVD" and _has_machine_action(metadata)
+                    else "Machine action available: no"
+                ),
                 "",
                 "Content:",
                 hit.content,
             )
         )
     return "\n".join(lines)
+
+
+def _has_machine_action(metadata: object) -> bool:
+    if not isinstance(metadata, dict):
+        return False
+    value = metadata.get("machine_action")
+    if isinstance(value, str):
+        return bool(value.strip())
+    return isinstance(value, dict) and bool(value)

@@ -2,10 +2,11 @@
 
 本專案是一套以 **R300AI Agentic SDK** 為流程核心、**FAISS** 為 FMEA 向量知識庫、**Azure OpenAI-compatible API** 為語言模型與 Embedding 服務、**Streamlit** 為操作介面的 FMEA 應用。
 
-系統目前提供兩個主要功能：
+系統目前提供三個主要功能：
 
 1. **FMEA 智慧顧問**：理解使用者問題，自動判斷是否需要語意檢索或精確查詢，產生答案後再做品質檢查與一次自動修正。
 2. **從聊天建立 FMEA**：將會議、客服或工程聊天紀錄整理成候選 FMEA rows，與現有資料比對去重，再輸出可下載的 Preview Excel；此流程不會直接修改正式知識庫。
+3. **PVD 模擬機台**：將 PVD row 內預先核准的三個數值 setpoint 套用到 Streamlit 內的 demo 狀態；此功能只用於展示 workflow 工具呼叫，不會控制實體機台。
 
 > 名詞說明：R300AI Agentic SDK 的五個標準模組是 **Perceive、Plan、Retrieve、Action、Reflect**。常見的 `Percieve` 與 `Receive` 分別應寫成 `Perceive` 與 `Retrieve`。
 
@@ -163,7 +164,7 @@ class CustomModule:
 }
 ```
 
-支援四種 `query_type`：
+主要 `query_type` 包含：
 
 | 類型 | 範例 | 後續策略 |
 | --- | --- | --- |
@@ -171,6 +172,7 @@ class CustomModule:
 | `internal_fmea` | 「PVD 晶圓破片有哪些原因？」 | 先做指定製程的語意檢索 |
 | `structured_fmea` | 「列出 PVD 中 RPN 大於 100 的項目」 | 由 Action 呼叫精確查詢工具 |
 | `cross_table` | 「比較 PVD 與 ECD 的高風險項目」 | 對多個製程檢索並產生比較表 |
+| `machine_control` | 「依相關 PVD 紀錄調整模擬機台」 | 先檢索 PVD row，再套用該 row 的 demo recipe |
 
 若使用者詢問內部專業問題但沒有指定製程，系統不猜測也不掃描所有製程，而是先追問可查詢的製程。下一輪只要沿用相同 `session_id`，Perceive 就能結合前一輪問題與新補充的製程。
 
@@ -180,6 +182,7 @@ Plan 只輸出簡短路由標籤與 `next_module`：
 
 - `general_knowledge` → `action`
 - `structured_fmea` → `action`
+- `machine_control` → `retrieve`
 - `internal_fmea` → `retrieve`
 - `cross_table` → `retrieve`
 
@@ -210,7 +213,7 @@ Plan 只輸出簡短路由標籤與 `next_module`：
 `FmeaToolAction` 採兩階段工具呼叫模式：
 
 1. 將完整對話、Perceive 結果、Retrieve 證據與 Reflect 修正指示組成 messages。
-2. 模型決定是否呼叫 `query_fmea_records`。
+2. 模型依意圖決定是否呼叫允許的工具，例如 `query_fmea_records` 或 `apply_machine_action`。
 3. `FmeaToolDispatcher` 只執行 allow-list 中的工具。
 4. 若有工具結果，再呼叫模型一次產生使用者可讀的最終回答。
 
@@ -246,6 +249,33 @@ flowchart LR
 ```
 
 目前 `max_corrections=1`，因此最多只會自動修正一次，避免 Agent 在 Action 與 Reflect 間無限循環。若 Reflect 服務暫時不可用，但 Action 已有正常答案，系統會保留答案，不會因驗證器故障製造重試迴圈。
+
+#### PVD 模擬機台 Demo
+
+PVD Excel 可在最後加入可選的 `machine_action` 欄位；每個 row 以穩定的 document ID（例如 `PVD-0001`）對應一組完整 recipe：
+
+```json
+{
+  "machine_id": "PVD-DEMO-01",
+  "setpoints": {
+    "button_1": 10,
+    "button_2": 20,
+    "button_3": 30
+  }
+}
+```
+
+`button_1`、`button_2`、`button_3` 都是 `0` 到 `100` 的數值 setpoint。當 Perceive 判定使用者明確要求執行並輸出 `machine_control` 時，workflow 先 Retrieve，再讓 Action 呼叫 `apply_machine_action(document_id)`；工具後端從該 row 讀取 recipe，模型不能自行傳入或改寫 setpoint。明確指令會直接執行、不再二次確認，但仍有以下限制：
+
+- dispatcher allow-list 只接受已登錄的工具與參數。
+- `document_id` 必須是本輪實際檢索到、具有合法 `machine_action` 的 PVD row。
+- `workflow_id + document_id` 形成冪等保護，避免 Reflect 重試造成重複執行。
+
+執行前後狀態與歷程可在 Streamlit 第三頁「⚙️ PVD 模擬機台」查看，也可在該頁手動套用或重設三個 setpoint。這是記憶體內的 demo simulator，不是實體設備控制介面。
+
+範例問題：「PVD 製程有鍍膜厚度不均，請依照相關 FMEA 紀錄直接調整模擬機台參數。」
+
+新增或修改 Excel 的 `machine_action` 後，需要重新產生對應 Markdown。此欄位只作為受信任的執行 metadata，不會放入 Embedding 文字或影響語意相似度，因此只改 recipe 不必重建 FAISS index；若同時修改失效模式、原因、控制或其他可檢索內容，才需執行 `python build_indexes.py`。
 
 ### 3.2 聊天建立 FMEA Preview 的全自訂模組
 
@@ -378,6 +408,12 @@ callback 只負責把資料排入 queue；所有 Streamlit 元件都留在主執
 - 下載記憶體內建立的 `.xlsx` Preview。
 - 驗證失敗或全部重複時不提供錯誤／空白檔案。
 
+#### PVD 模擬機台頁
+
+- 顯示 `button_1`、`button_2`、`button_3` 的目前數值。
+- 與 Agent 工具共用同一個記憶體內 simulator，可手動套用或重設。
+- 顯示每次操作的來源、document ID 與調整前後值。
+
 ### 可延伸的 UI 應用
 
 基於同一套 events 與 `WorkflowResult`，未來可加入：
@@ -425,7 +461,7 @@ data/indexes/<PROCESS>/
 └── metadata.json
 ```
 
-`metadata.json` 保存 embedding model、內容雜湊、向量數、維度與原始 document metadata。啟動 UI 時只載入現有且仍有效的索引；如果 Markdown、模型或文件數已改變，不會暗中呼叫 Embedding API，而是要求明確執行 `python build_indexes.py`。
+`metadata.json` 保存 embedding model、內容雜湊、向量數、維度與原始 document metadata。啟動 UI 時只載入現有且仍有效的索引；如果 Excel 轉出的可檢索內容、直接維護的 Markdown、模型或文件數已改變，不會暗中呼叫 Embedding API，而是要求明確執行 `python build_indexes.py`。`machine_action` 是刻意排除於 Embedding identity 的執行 metadata，所以單獨修改它不會讓索引失效。
 
 ### 執行期的兩種取資料方式
 
@@ -448,6 +484,7 @@ data/indexes/<PROCESS>/
 | 跨製程比較 | 「比較 PVD、ECD 的主要高風險失效」 | Plan 路由多製程 Retrieve，Action 產生比較表 |
 | 資訊不完整 | 「晶圓破片是什麼原因？」 | Agent 不猜製程，先追問；下一輪由 memory 接續 |
 | 回答自動校驗 | 初次回答遺漏條件或缺乏證據 | Reflect 將具體修正原因送回 Action，最多自動修正一次 |
+| PVD 模擬機台 | 「依照相關 PVD FMEA 紀錄直接調整模擬機台」 | Retrieve 鎖定 row，allow-listed tool 套用其三個 setpoint，UI 顯示前後狀態 |
 | 工程討論結構化 | 上傳異常會議聊天紀錄 | 自訂 Perceive 抽取 rows，自訂 Retrieve 去重，自訂 Reflect 驗證 Excel |
 | 人工審核前置 | 產出待確認的新 FMEA rows | Preview 與正式知識庫隔離，不會直接發布資料 |
 
@@ -457,7 +494,7 @@ data/indexes/<PROCESS>/
 
 ```text
 fmea_sdk/
-├── app.py                         # Streamlit 入口與兩個功能頁
+├── app.py                         # Streamlit 入口與三個功能頁
 ├── build_indexes.py               # 建立或載入所有製程索引
 ├── requirements.txt               # Python 套件與固定 SDK commit
 ├── .env.example                   # 環境變數範本
@@ -473,6 +510,7 @@ fmea_sdk/
 │   ├── fmea_reflect.py            # 自訂 Reflect 與自動修正
 │   ├── fmea_tools.py              # Tool schema 與 allow-list dispatcher
 │   ├── fmea_query.py              # 精確結構化查詢
+│   ├── machine_action.py          # PVD recipe 驗證與記憶體內模擬機台
 │   ├── faiss_knowledge_base.py     # 索引建立、驗證、載入與搜尋
 │   ├── my_splitter.py              # 每個 FMEA row 一個 document
 │   ├── excel_to_markdown.py        # Excel 正規化與 Markdown 輸出

@@ -66,6 +66,26 @@ def test_blank_numeric_metadata_becomes_none(tmp_path: Path) -> None:
     assert split_fmea_markdown(path)[0].metadata["rpn_before"] is None
 
 
+def test_machine_action_is_metadata_but_not_retrieval_content(
+    tmp_path: Path,
+) -> None:
+    machine_action = (
+        '{"machine_id":"PVD-DEMO-01","setpoints":'
+        '{"button_1":10,"button_2":20,"button_3":30}}'
+    )
+    path = tmp_path / "PVD_FMEA.md"
+    path.write_text(
+        _block("PVD-0001", extra=f"- machine_action: {machine_action}\n"),
+        encoding="utf-8",
+    )
+
+    document = split_fmea_markdown(path)[0]
+
+    assert document.metadata["machine_action"] == machine_action
+    assert "machine_action" not in document.content
+    assert "PVD-0001" in document.content
+
+
 @pytest.mark.parametrize(
     "content, expected",
     [

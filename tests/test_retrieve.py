@@ -23,6 +23,12 @@ class FakeKnowledgeBase:
                     "source_excel": f"{self.process_code}_FMEA.xlsx",
                     "source_sheet": self.process_code.lower(),
                     "source_excel_row": 3,
+                    "machine_action": (
+                        '{"machine_id":"PVD-DEMO-01","setpoints":'
+                        '{"button_1":10,"button_2":20,"button_3":30}}'
+                        if self.process_code == "PVD"
+                        else ""
+                    ),
                 },
             )
         ]
@@ -67,6 +73,13 @@ def test_retrieve_selects_only_expected_indexes(processes: list[str], expected: 
     assert output["next_module"] == "action"
     assert output["payload"]["retrieval_hit_count"] == len(expected)
     assert set(output["payload"]["retrieval_selected_sources"]) == expected
+    assert set(output["payload"]["retrieval_document_ids"]) == {
+        f"{process}-0001" for process in expected
+    }
+    expected_machine_actions = {"PVD-0001"} if "PVD" in expected else set()
+    assert set(
+        output["payload"]["retrieval_machine_action_document_ids"]
+    ) == expected_machine_actions
 
 
 def test_unspecified_process_requests_clarification_without_searching() -> None:
@@ -81,6 +94,8 @@ def test_unspecified_process_requests_clarification_without_searching() -> None:
     assert output["payload"]["_trace_reason"] == "等待指定製程"
     assert output["payload"]["available_processes"] == ["ECD", "PI", "PVD"]
     assert output["payload"]["retrieval_hit_count"] == 0
+    assert output["payload"]["retrieval_document_ids"] == []
+    assert output["payload"]["retrieval_machine_action_document_ids"] == []
 
 
 def test_explicit_all_processes_searches_all_indexes() -> None:
@@ -103,6 +118,18 @@ def test_general_knowledge_skips_all_indexes() -> None:
     assert not any(kb.calls for kb in knowledge_bases.values())
     assert output["next_module"] == "action"
     assert output["payload"]["retrieval_hit_count"] == 0
+    assert output["payload"]["retrieval_document_ids"] == []
+    assert output["payload"]["retrieval_machine_action_document_ids"] == []
+
+
+def test_retrieved_context_marks_machine_action_availability() -> None:
+    output = ProcessAwareFmeaRetrieve({"PVD": FakeKnowledgeBase("PVD")})(
+        _state(["PVD"], query_type="machine_control")
+    )
+
+    assert "Machine action available: yes" in output["payload"][
+        "latest_retrieved_content"
+    ]
 
 
 @pytest.mark.parametrize("complexity, top_k", [("small", 5), ("medium", 8), ("large", 12)])

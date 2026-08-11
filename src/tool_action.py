@@ -209,19 +209,45 @@ class FmeaToolAction:
         state: WorkflowState,
     ) -> list[dict[str, Any]]:
         results: list[dict[str, Any]] = []
+        machine_action_count = sum(
+            str(call["function"]["name"]) == "apply_machine_action"
+            for call in tool_calls
+        )
+        previous_machine_document = _successful_machine_document_id(
+            state.last_action_result or {}
+        )
         for call in tool_calls:
             name = str(call["function"]["name"])
             raw_arguments = call["function"].get("arguments") or "{}"
             try:
+                if name == "apply_machine_action" and machine_action_count > 1:
+                    raise ValueError(
+                        "multiple apply_machine_action calls in one response are not allowed"
+                    )
                 arguments = json.loads(raw_arguments)
                 if not isinstance(arguments, dict):
                     raise ValueError("tool arguments 必須是 JSON object")
+                if name == "apply_machine_action" and previous_machine_document:
+                    requested_document = (
+                        str(arguments.get("document_id") or "").strip().upper()
+                    )
+                    if requested_document != previous_machine_document:
+                        raise PermissionError(
+                            "Reflect retry cannot switch machine_action document_id "
+                            f"from {previous_machine_document} to "
+                            f"{requested_document or '<missing>'}"
+                        )
                 result: dict[str, Any] = {
                     "ok": True,
                     "data": self._dispatcher.execute(
                         name,
                         arguments,
                         conversation=_conversation_transcript(state),
+                        workflow_id=state.workflow_id,
+                        retrieved_document_ids=_retrieval_document_ids(state),
+                        perceived_intent=str(
+                            state.lookup("perceived_intent") or ""
+                        ),
                     ),
                 }
             except Exception as exc:
@@ -245,6 +271,13 @@ def _conversation_transcript(state: WorkflowState) -> str:
         if transcript:
             return transcript
     return f"user: {state.latest_user_message()}"
+
+
+def _retrieval_document_ids(state: WorkflowState) -> list[str]:
+    value = state.lookup("retrieval_document_ids") or []
+    if not isinstance(value, (list, tuple, set)):
+        return []
+    return [str(document_id) for document_id in value if str(document_id).strip()]
 
 
 def _tool_result_for_model(result: object) -> object:
@@ -278,6 +311,7 @@ def _build_messages(
 ) -> list[dict[str, Any]]:
     retrieved = state.lookup("latest_retrieved_content") or state.lookup("retrieved_snippet") or ""
     perceived_details = state.lookup("perceived_details") or {}
+    machine_action_document_ids = _machine_action_document_ids(state)
     correction = state.lookup("reflect_correction")
     correction_context: dict[str, Any] = {}
     if isinstance(correction, dict):
@@ -299,6 +333,12 @@ def _build_messages(
                 default=str,
             )[:12000],
         }
+        if _has_successful_machine_action(previous_result):
+            correction_context["machine_action_retry_instruction"] = (
+                "The previous apply_machine_action call succeeded. Any correction "
+                "retry for the same document is idempotent; do not select a different "
+                "document or emit multiple machine actions."
+            )
     return build_module_messages(
         state.memory,
         system_prompt=system_prompt,
@@ -307,10 +347,50 @@ def _build_messages(
             "perceived_summary": state.lookup("perceived_summary") or "",
             "perceived_details": json.dumps(perceived_details, ensure_ascii=False),
             "retrieved_context": retrieved,
+            "available_machine_action_document_ids": json.dumps(
+                machine_action_document_ids,
+                ensure_ascii=False,
+            ),
             **correction_context,
         },
         latest_user_message=state.latest_user_message(),
     )
+
+
+def _machine_action_document_ids(state: WorkflowState) -> list[str]:
+    value = state.lookup("retrieval_machine_action_document_ids") or []
+    if not isinstance(value, (list, tuple, set)):
+        return []
+    return [
+        str(document_id).strip().upper()
+        for document_id in value
+        if str(document_id).strip()
+    ]
+
+
+def _has_successful_machine_action(previous_result: dict[str, Any]) -> bool:
+    return _successful_machine_document_id(previous_result) is not None
+
+
+def _successful_machine_document_id(
+    previous_result: dict[str, Any],
+) -> str | None:
+    for tool_result in previous_result.get("tool_results") or []:
+        if not isinstance(tool_result, dict):
+            continue
+        result = tool_result.get("result")
+        if (
+            tool_result.get("name") == "apply_machine_action"
+            and isinstance(result, dict)
+            and result.get("ok") is True
+        ):
+            data = result.get("data")
+            if not isinstance(data, dict):
+                continue
+            document_id = str(data.get("document_id") or "").strip().upper()
+            if document_id:
+                return document_id
+    return None
 
 
 def _needs_process_clarification(state: WorkflowState) -> bool:
@@ -321,7 +401,7 @@ def _needs_process_clarification(state: WorkflowState) -> bool:
     if not isinstance(details, dict):
         return False
     query_type = str(details.get("query_type") or state.lookup("perceived_intent") or "")
-    if query_type not in {"internal_fmea", "structured_fmea"}:
+    if query_type not in {"internal_fmea", "structured_fmea", "machine_control"}:
         return False
     processes = details.get("processes") or []
     has_process = isinstance(processes, list) and any(

@@ -13,6 +13,7 @@ from src.faiss_knowledge_base import FmeaFaissKnowledgeBase
 from src.fmea_query import FmeaQueryService
 from src.fmea_reflect import FmeaAutoCorrectReflect
 from src.fmea_tools import FMEA_TOOLS, FmeaToolDispatcher
+from src.machine_action import MachineActionService, PvdMachineSimulator
 from src.process_retrieve import ProcessAwareFmeaRetrieve
 from src.tool_action import FmeaToolAction
 
@@ -53,6 +54,14 @@ ACTION_SYSTEM_PROMPT = """你是公司內部 FMEA 智慧顧問。
 3. 沒有內容的清單傳空陣列，不要為了填滿報告而捏造內容。
 4. Tool 成功後只需簡短告知報告已完成，不要在回答中重複整份報告。
 
+當 perceived_intent=machine_control：
+1. 只有使用者明確要求「調整、設定、套用或執行」PVD 機台參數時，才可呼叫 apply_machine_action；目前其他製程不支援機台控制。
+2. apply_machine_action 只能傳入 retrieved_context 中實際出現的 PVD document ID，不可自行產生機台參數或數值。
+3. `available_machine_action_document_ids` 明確列出本輪可執行的 rows。使用者已明確要求執行且其中有與問題相符的 row 時，必須呼叫 apply_machine_action；不要因 retrieved_context 未顯示完整 recipe JSON 而判定沒有 machine_action。
+4. 若相關紀錄不明確、`available_machine_action_document_ids` 為空，或 tool 驗證失敗，不可改用猜測值；應簡短說明未執行。
+5. Tool 成功後，簡短列出三個 setpoint 的調整前後值；changed=false 時說明機台原本已是目標值。
+6. Reflect 修正回答時，如果上一輪 apply_machine_action 已成功，仍使用相同 document ID；系統會以同一 workflow 防止重複執行。
+
 當 perceived_details 表示尚未確認製程：
 1. 不可呼叫工具或猜測製程。
 2. 只詢問使用者要查詢哪一個製程；使用者補充製程後，才可查詢公司內部 FMEA。
@@ -62,6 +71,7 @@ RETRIEVE_DESCRIPTION = (
     "公司內部 FMEA 資料，包含製程項目、功能需求、潛在失效模式、"
     "失效效應、潛在原因、現行控制措施、建議措施、Severity、"
     "Occurrence、Detection 與 RPN。"
+    "PVD 紀錄亦可包含已核准的 demo machine_action setpoint recipe。"
 )
 
 EVENTS_SCHEMA = {
@@ -78,7 +88,8 @@ def _perceive_guidance(process_codes: list[str]) -> str:
     return f"""請分類 FMEA 問題，只回傳 intent、summary、details。
 intent 必須等於 details.query_type。
 details 必須包含 query_type、processes、cross_table、complexity。
-query_type 只能是 general_knowledge、internal_fmea、structured_fmea、cross_table、conversation_report。
+query_type 只能是 general_knowledge、internal_fmea、structured_fmea、cross_table、conversation_report、machine_control。
+使用者明確要求依 FMEA 紀錄調整、設定、套用或執行機台參數時，使用 machine_control，cross_table=false；即使問題包含 document ID 或數值條件，明確執行意圖仍以 machine_control 優先。只有使用者或對話已明確建立 PVD 情境時 processes 才填 PVD；未確認製程時 processes=[] 以便先追問，不可自行猜成 PVD。目前只有 PVD 支援機台控制。只詢問建議、原因或「該怎麼調」但沒有要求實際執行時，不是 machine_control。
 使用者明確要求整理、產生、匯出或下載本次對話報告時，使用 conversation_report；processes 可保留對話中已提及的有效製程，cross_table=false，complexity=small。
 一般 FMEA 定義或計算問題使用 general_knowledge，processes=[]，cross_table=false，complexity=small。
 general_knowledge 僅限 FMEA 本身的概念、定義或計算，例如「什麼是 FMEA」或「RPN 如何計算」。
@@ -97,6 +108,7 @@ thought 只能是一個簡短的路由標籤，不可輸出推理過程。
 perceived_intent=general_knowledge 時 next_module=action。
 perceived_intent=structured_fmea 時 next_module=action。
 perceived_intent=conversation_report 時 next_module=action。
+perceived_intent=machine_control 時 next_module=retrieve。
 perceived_intent=internal_fmea 或 cross_table 時 next_module=retrieve。
 next_module 只能是 retrieve 或 action。"""
 
@@ -104,11 +116,19 @@ next_module 只能是 retrieve 或 action。"""
 def build_workflow(
     knowledge_bases: dict[str, FmeaFaissKnowledgeBase],
     settings: Settings | None = None,
+    machine_simulator: PvdMachineSimulator | None = None,
 ) -> Workflow:
     settings = settings or load_settings(require_chat=True, require_embedding=False)
     process_codes = sorted(knowledge_bases)
     query_service = FmeaQueryService(knowledge_bases)
-    tool_dispatcher = FmeaToolDispatcher(query_service)
+    machine_action_service = MachineActionService(
+        knowledge_bases,
+        machine_simulator or PvdMachineSimulator(),
+    )
+    tool_dispatcher = FmeaToolDispatcher(
+        query_service,
+        machine_action_service=machine_action_service,
+    )
     return Workflow(
         workflow_name="FMEA智慧顧問",
         description=(
@@ -126,6 +146,7 @@ def build_workflow(
                         "structured_fmea",
                         "cross_table",
                         "conversation_report",
+                        "machine_control",
                     ],
                 },
                 {"name": "processes", "values": process_codes},

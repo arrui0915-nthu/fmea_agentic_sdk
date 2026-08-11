@@ -63,7 +63,15 @@ class FmeaFaissKnowledgeBase:
                 {
                     "document_id": document.document_id,
                     "content": document.content,
-                    "metadata": document.metadata,
+                    # machine_action is execution metadata and is deliberately
+                    # excluded from the embedding identity. Changing a trusted
+                    # demo recipe must not require sending FMEA text back to the
+                    # embedding endpoint or alter semantic similarity.
+                    "metadata": {
+                        key: value
+                        for key, value in document.metadata.items()
+                        if key != "machine_action"
+                    },
                 }
                 for document in self.documents
             ],

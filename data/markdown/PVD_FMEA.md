@@ -21,6 +21,7 @@
 - detection_after: 1
 - rpn_after: 32
 - owner_date: 
+- machine_action: {"machine_id":"PVD-DEMO-01","setpoints":{"button_1":10,"button_2":20,"button_3":30}}
 
 <!-- FMEA_ROW_END -->
 
@@ -47,6 +48,7 @@
 - detection_after: 1
 - rpn_after: 40
 - owner_date: 
+- machine_action: {"machine_id":"PVD-DEMO-01","setpoints":{"button_1":15,"button_2":25,"button_3":35}}
 
 <!-- FMEA_ROW_END -->
 
@@ -73,6 +75,7 @@
 - detection_after: 6
 - rpn_after: 120
 - owner_date: 
+- machine_action: {"machine_id":"PVD-DEMO-01","setpoints":{"button_1":20,"button_2":30,"button_3":40}}
 
 <!-- FMEA_ROW_END -->
 
@@ -99,6 +102,7 @@
 - detection_after: 3
 - rpn_after: 48
 - owner_date: 
+- machine_action: {"machine_id":"PVD-DEMO-01","setpoints":{"button_1":25,"button_2":35,"button_3":45}}
 
 <!-- FMEA_ROW_END -->
 
@@ -125,6 +129,7 @@
 - detection_after: 3
 - rpn_after: 63
 - owner_date: 
+- machine_action: {"machine_id":"PVD-DEMO-01","setpoints":{"button_1":30,"button_2":40,"button_3":50}}
 
 <!-- FMEA_ROW_END -->
 
@@ -151,6 +156,7 @@
 - detection_after: 3
 - rpn_after: 54
 - owner_date: 
+- machine_action: {"machine_id":"PVD-DEMO-01","setpoints":{"button_1":35,"button_2":45,"button_3":55}}
 
 <!-- FMEA_ROW_END -->
 
@@ -177,6 +183,7 @@
 - detection_after: 3
 - rpn_after: 54
 - owner_date: 
+- machine_action: {"machine_id":"PVD-DEMO-01","setpoints":{"button_1":40,"button_2":50,"button_3":60}}
 
 <!-- FMEA_ROW_END -->
 
@@ -203,6 +210,7 @@
 - detection_after: 3
 - rpn_after: 120
 - owner_date: 
+- machine_action: {"machine_id":"PVD-DEMO-01","setpoints":{"button_1":45,"button_2":55,"button_3":65}}
 
 <!-- FMEA_ROW_END -->
 
@@ -229,6 +237,7 @@
 - detection_after: 3
 - rpn_after: 96
 - owner_date: 
+- machine_action: {"machine_id":"PVD-DEMO-01","setpoints":{"button_1":50,"button_2":60,"button_3":70}}
 
 <!-- FMEA_ROW_END -->
 
@@ -255,5 +264,6 @@
 - detection_after: 10
 - rpn_after: 200
 - owner_date: 
+- machine_action: {"machine_id":"PVD-DEMO-01","setpoints":{"button_1":55,"button_2":65,"button_3":75}}
 
 <!-- FMEA_ROW_END -->

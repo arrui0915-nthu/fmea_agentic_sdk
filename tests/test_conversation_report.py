@@ -69,5 +69,9 @@ def test_dispatcher_exposes_report_tool_and_injects_conversation() -> None:
         conversation="user: 測試對話",
     )
 
-    assert tool_names == ["query_fmea_records", "generate_session_report"]
+    assert tool_names == [
+        "query_fmea_records",
+        "generate_session_report",
+        "apply_machine_action",
+    ]
     assert "user: 測試對話" in result["artifact"]["content"]

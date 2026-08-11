@@ -12,6 +12,27 @@ class FakeKnowledgeBase:
     documents: list[FmeaDocument]
 
 
+class FakeMachineActionService:
+    def __init__(self) -> None:
+        self.calls: list[dict[str, object]] = []
+
+    def execute(
+        self,
+        document_id: str,
+        *,
+        allowed_document_ids: list[str],
+        idempotency_key: str,
+    ) -> dict[str, object]:
+        self.calls.append(
+            {
+                "document_id": document_id,
+                "allowed_document_ids": allowed_document_ids,
+                "idempotency_key": idempotency_key,
+            }
+        )
+        return {"document_id": document_id, "changed": True}
+
+
 def _document(
     number: int,
     *,
@@ -121,6 +142,75 @@ def test_dispatcher_exposes_query_without_a_configurable_limit() -> None:
 
     assert result["returned_count"] == 1
     assert "limit" not in properties
+
+
+def test_machine_action_tool_schema_accepts_only_a_document_id() -> None:
+    tool = next(
+        tool
+        for tool in FMEA_TOOLS
+        if tool["function"]["name"] == "apply_machine_action"
+    )
+    parameters = tool["function"]["parameters"]
+
+    assert parameters["required"] == ["document_id"]
+    assert set(parameters["properties"]) == {"document_id"}
+    assert parameters["additionalProperties"] is False
+
+
+def test_dispatcher_passes_machine_action_security_context() -> None:
+    machine_service = FakeMachineActionService()
+    dispatcher = FmeaToolDispatcher(
+        _service(_document(1, process="PVD")),
+        machine_action_service=machine_service,  # type: ignore[arg-type]
+    )
+
+    result = dispatcher.execute(
+        "apply_machine_action",
+        {"document_id": "pvd-0001"},
+        workflow_id="workflow-123",
+        retrieved_document_ids=["PVD-0001", "PVD-0002"],
+        perceived_intent="machine_control",
+    )
+
+    assert result == {"document_id": "PVD-0001", "changed": True}
+    assert machine_service.calls == [
+        {
+            "document_id": "PVD-0001",
+            "allowed_document_ids": ["PVD-0001", "PVD-0002"],
+            "idempotency_key": (
+                "workflow-123:apply_machine_action:PVD-0001"
+            ),
+        }
+    ]
+
+
+def test_dispatcher_rejects_machine_action_without_service_or_intent() -> None:
+    query_service = _service(_document(1, process="PVD"))
+    without_service = FmeaToolDispatcher(query_service)
+
+    with pytest.raises(RuntimeError, match="not configured"):
+        without_service.execute(
+            "apply_machine_action",
+            {"document_id": "PVD-0001"},
+            workflow_id="workflow-123",
+            retrieved_document_ids=["PVD-0001"],
+            perceived_intent="machine_control",
+        )
+
+    machine_service = FakeMachineActionService()
+    dispatcher = FmeaToolDispatcher(
+        query_service,
+        machine_action_service=machine_service,  # type: ignore[arg-type]
+    )
+    with pytest.raises(PermissionError, match="machine_control"):
+        dispatcher.execute(
+            "apply_machine_action",
+            {"document_id": "PVD-0001"},
+            workflow_id="workflow-123",
+            retrieved_document_ids=["PVD-0001"],
+            perceived_intent="internal_fmea",
+        )
+    assert machine_service.calls == []
 
 
 def test_dispatcher_rejects_unregistered_tools() -> None:

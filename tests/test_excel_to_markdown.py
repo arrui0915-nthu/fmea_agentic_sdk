@@ -1,13 +1,78 @@
 from pathlib import Path
 
+import pytest
 from openpyxl import Workbook
 
-from src.excel_to_markdown import convert_excel_to_markdown, read_fmea_rows
+from src.excel_to_markdown import (
+    OPTIONAL_FIELDS,
+    SOURCE_FIELDS,
+    STANDARD_FIELDS,
+    convert_excel_to_markdown,
+    read_fmea_rows,
+)
 from src.my_splitter import split_fmea_markdown
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 PVD_EXCEL = PROJECT_ROOT / "data" / "input" / "PVD_FMEA.xlsx"
+
+
+def _create_fmea_workbook(
+    tmp_path: Path,
+    *,
+    machine_action_header: str | None = None,
+) -> Path:
+    workbook = Workbook()
+    worksheet = workbook.active
+    worksheet.title = "fmea_pvd"
+    headers = [
+        "process",
+        "functional requirement",
+        "potential failure mode",
+        "failure effect",
+        "severity",
+        "potential causes",
+        "occurrence",
+        "current process controls",
+        "detection",
+        "rpn",
+        "recommended actions",
+        "severity",
+        "occurrence",
+        "detection",
+        "rpn",
+        "owner date",
+    ]
+    values: list[object] = [
+        "PVD",
+        "stable coating",
+        "coating too thin",
+        "low durability",
+        8,
+        "low chamber pressure",
+        4,
+        "inspect pressure",
+        1,
+        32,
+        "adjust setpoints",
+        4,
+        2,
+        1,
+        8,
+        "owner / 2026-08-11",
+    ]
+    if machine_action_header is not None:
+        headers.append(machine_action_header)
+        values.append(
+            '{"machine_id":"PVD-DEMO-01","setpoints":'
+            '{"button_1":10,"button_2":20,"button_3":30}}'
+        )
+    worksheet.append(headers)
+    worksheet.append(values)
+    excel_path = tmp_path / "PVD_FMEA.xlsx"
+    workbook.save(excel_path)
+    workbook.close()
+    return excel_path
 
 
 def test_one_excel_produces_one_markdown(tmp_path: Path) -> None:
@@ -49,6 +114,66 @@ def test_empty_cells_never_render_as_none(tmp_path: Path) -> None:
     output_path = convert_excel_to_markdown(PVD_EXCEL, tmp_path)
 
     assert "None" not in output_path.read_text(encoding="utf-8")
+
+
+def test_standard_fields_schema_remains_unchanged() -> None:
+    assert STANDARD_FIELDS == [
+        "process",
+        "functional_requirement",
+        "potential_failure_mode",
+        "potential_failure_effect",
+        "severity_before",
+        "potential_causes",
+        "occurrence_before",
+        "current_process_controls",
+        "detection_before",
+        "rpn_before",
+        "recommended_actions",
+        "severity_after",
+        "occurrence_after",
+        "detection_after",
+        "rpn_after",
+        "owner_date",
+    ]
+    assert OPTIONAL_FIELDS == ["machine_action"]
+    assert SOURCE_FIELDS == [*STANDARD_FIELDS, "machine_action"]
+
+
+@pytest.mark.parametrize(
+    "header",
+    ["machine_action", "machine action", "機台動作"],
+)
+def test_optional_machine_action_is_read_and_rendered(
+    tmp_path: Path,
+    header: str,
+) -> None:
+    excel_path = _create_fmea_workbook(
+        tmp_path,
+        machine_action_header=header,
+    )
+
+    rows = read_fmea_rows(excel_path)
+    output_path = convert_excel_to_markdown(excel_path, tmp_path / "markdown")
+
+    expected = (
+        '{"machine_id":"PVD-DEMO-01","setpoints":'
+        '{"button_1":10,"button_2":20,"button_3":30}}'
+    )
+    assert rows[0].values["machine_action"] == expected
+    assert f"- machine_action: {expected}" in output_path.read_text(encoding="utf-8")
+    assert split_fmea_markdown(output_path)[0].metadata["machine_action"] == expected
+
+
+def test_missing_optional_machine_action_is_empty_and_rendered(
+    tmp_path: Path,
+) -> None:
+    excel_path = _create_fmea_workbook(tmp_path)
+
+    rows = read_fmea_rows(excel_path)
+    output_path = convert_excel_to_markdown(excel_path, tmp_path / "markdown")
+
+    assert rows[0].values["machine_action"] == ""
+    assert "- machine_action: \n" in output_path.read_text(encoding="utf-8")
 
 
 def test_detects_fmea_sheet_and_header_row(tmp_path: Path) -> None:
