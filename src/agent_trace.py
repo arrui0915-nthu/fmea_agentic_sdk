@@ -11,7 +11,7 @@ TRACE_STAGES: tuple[tuple[str, str], ...] = (
     ("perceive", "理解問題"),
     ("plan", "決定處理方式"),
     ("retrieve", "搜尋 FMEA 資料"),
-    ("action", "產生回答"),
+    ("action", "執行動作與產生回答"),
     ("reflect", "檢查回答"),
 )
 

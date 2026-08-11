@@ -21,6 +21,7 @@ flowchart TB
     subgraph Application[應用層]
         UI --> Chat[FMEA 智慧顧問]
         UI --> Preview[聊天建立 FMEA Preview]
+        UI --> MachinePage[PVD 模擬機台]
         UIS[WorkflowUiStream<br/>AgentTraceRecorder]
     end
 
@@ -50,13 +51,18 @@ flowchart TB
         LLM[Azure OpenAI-compatible<br/>Chat API]
         EMB[Azure OpenAI-compatible<br/>Embedding API]
         XLSX[記憶體內 Preview XLSX]
+        MachineSvc[MachineActionService<br/>驗證 row、recipe 與冪等]
+        Simulator[PvdMachineSimulator<br/>原子套用三個 setpoint]
         MD --> IDX
         EMB --> IDX
         IDX --> Query
+        MachineSvc --> Simulator
     end
 
     R --> IDX
     A --> Query
+    A --> MachineSvc
+    MachinePage --> Simulator
     P --> LLM
     L --> LLM
     A --> LLM
@@ -72,7 +78,7 @@ flowchart TB
 | UI 橋接層 | `src/ui_stream.py`、`src/agent_trace.py` | 將 SDK 背景執行事件轉成可由 Streamlit 主執行緒安全呈現的事件與軌跡 |
 | Agent 工作流程層 | `src/workflow.py`、`src/fmea_preview.py` | 組裝五大模組、定義路由、事件欄位與流程邊界 |
 | 領域模組層 | `process_retrieve.py`、`tool_action.py`、`fmea_reflect.py` | 製程檢索、工具呼叫、回答驗證與自動修正 |
-| 查詢與工具層 | `fmea_tools.py`、`fmea_query.py` | Allow-list 工具、數值篩選、排序、計數與回傳上限 |
+| 查詢與工具層 | `fmea_tools.py`、`fmea_query.py`、`machine_action.py` | Allow-list 工具、數值篩選、排序、機台 recipe 驗證與模擬 setpoint 套用 |
 | 知識庫層 | `my_splitter.py`、`faiss_knowledge_base.py` | Markdown 切分、Embedding、索引持久化與語意搜尋 |
 | 資料準備層 | `excel_to_markdown.py`、`build_indexes.py` | Excel 轉標準 Markdown、建立或更新 FAISS indexes |
 | 設定層 | `src/config.py`、`.env` | Chat、Embedding 與資料路徑設定 |
@@ -205,6 +211,8 @@ Plan 只輸出簡短路由標籤與 `next_module`：
 - `retrieval_processes`
 - `retrieval_top_k`
 - `retrieval_hit_count`
+- `retrieval_document_ids`
+- `retrieval_machine_action_document_ids`（本輪具有合法 recipe、可交給工具執行的 PVD rows）
 
 若缺少製程，Retrieve 會以 `_trace_status=skipped` 標記為略過，接著讓 Action 回覆澄清問題。
 
@@ -305,11 +313,17 @@ flowchart TD
     L -- 精確條件查詢 --> T[Action 呼叫 query_fmea_records]
     L -- 產生對話報告 --> G[Action 呼叫 generate_session_report]
     L -- 內部或跨製程問題 --> R[Retrieve FAISS Top-K]
+    L -- PVD 機台控制 --> R
     R -- 缺少製程 --> C[Action 追問製程]
-    R -- 已取得證據 --> A
+    R -- 一般 FMEA 證據 --> A
+    R -- machine_control 且有可執行 row --> M[Action 由 LLM 呼叫<br/>apply_machine_action(document_id)]
+    M --> MS[MachineActionService<br/>驗證本輪 ID、recipe 與冪等]
+    MS --> SIM[PvdMachineSimulator<br/>原子套用三個 setpoint]
+    SIM --> AM[Action 根據 tool result<br/>回報調整前後值]
     T --> A2[Action 根據 tool result 回答]
     G --> H[SessionReportService<br/>產生 HTML artifact]
     A --> F[Reflect]
+    AM --> F
     A2 --> F
     H --> F
     C --> End[等待下一輪]
@@ -354,7 +368,7 @@ EVENTS_SCHEMA = {
     "perceive": {"label": "理解問題", "fields": ["*"]},
     "plan": {"label": "決定處理方式", "fields": ["*"]},
     "retrieve": {"label": "搜尋 FMEA 資料", "fields": ["*"]},
-    "action": {"label": "產生回答", "fields": []},
+    "action": {"label": "執行動作與產生回答", "fields": []},
     "reflect": {"label": "檢查回答", "fields": ["*"]},
 }
 ```

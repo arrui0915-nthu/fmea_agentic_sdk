@@ -78,7 +78,7 @@ EVENTS_SCHEMA = {
     "perceive": {"label": "理解問題", "fields": ["*"]},
     "plan": {"label": "決定處理方式", "fields": ["*"]},
     "retrieve": {"label": "搜尋 FMEA 資料", "fields": ["*"]},
-    "action": {"label": "產生回答", "fields": []},
+    "action": {"label": "執行動作與產生回答", "fields": []},
     "reflect": {"label": "檢查回答", "fields": ["*"]},
 }
 
