@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from collections.abc import Mapping
+from math import fsum
 from typing import Any
 
 from src.faiss_knowledge_base import FmeaFaissKnowledgeBase
@@ -145,6 +146,45 @@ class FmeaQueryService:
             "sort_by": resolved_sort_by,
             "sort_order": resolved_sort_order,
             "records": returned,
+        }
+
+    def summarize_rpn_by_process(
+        self,
+        *,
+        processes: list[str] | None = None,
+    ) -> dict[str, Any]:
+        """Return an exact average RPN for every selected process."""
+
+        selected, unknown = self._select_processes(processes)
+        summaries: list[dict[str, Any]] = []
+        for process_code in selected:
+            documents = self.knowledge_bases[process_code].documents
+            values = [
+                document.metadata.get("rpn_before")
+                for document in documents
+                if _is_number(document.metadata.get("rpn_before"))
+            ]
+            average_rpn = round(fsum(values) / len(values), 2) if values else None
+            summaries.append(
+                {
+                    "process": process_code,
+                    "average_rpn": average_rpn,
+                    "records_with_rpn": len(values),
+                    "total_records": len(documents),
+                }
+            )
+
+        summaries.sort(
+            key=lambda summary: (
+                summary["average_rpn"] is not None,
+                summary["average_rpn"] or 0,
+            ),
+            reverse=True,
+        )
+        return {
+            "processes": selected,
+            "unknown_processes": unknown,
+            "summaries": summaries,
         }
 
     def _select_processes(

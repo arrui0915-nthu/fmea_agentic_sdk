@@ -133,6 +133,50 @@ def test_unknown_process_is_reported_without_falling_back_to_all() -> None:
     assert result["unknown_processes"] == ["UNKNOWN"]
 
 
+def test_rpn_summary_uses_every_numeric_record_and_sorts_processes() -> None:
+    service = _service(
+        _document(1, process="PVD", rpn=100),
+        _document(2, process="PVD", rpn=200),
+        _document(3, process="PI", rpn=60),
+        _document(4, process="PI", rpn=None),
+    )
+    service.knowledge_bases["PI"].documents[1].metadata["rpn_before"] = None
+
+    result = service.summarize_rpn_by_process()
+
+    assert result == {
+        "processes": ["PI", "PVD"],
+        "unknown_processes": [],
+        "summaries": [
+            {
+                "process": "PVD",
+                "average_rpn": 150.0,
+                "records_with_rpn": 2,
+                "total_records": 2,
+            },
+            {
+                "process": "PI",
+                "average_rpn": 60.0,
+                "records_with_rpn": 1,
+                "total_records": 2,
+            },
+        ],
+    }
+
+
+def test_rpn_summary_honors_process_filter_and_reports_unknowns() -> None:
+    service = _service(
+        _document(1, process="PVD", rpn=100),
+        _document(2, process="PI", rpn=60),
+    )
+
+    result = service.summarize_rpn_by_process(processes=["pvd", "unknown"])
+
+    assert result["processes"] == ["PVD"]
+    assert result["unknown_processes"] == ["UNKNOWN"]
+    assert [item["process"] for item in result["summaries"]] == ["PVD"]
+
+
 def test_dispatcher_exposes_query_without_a_configurable_limit() -> None:
     service = _service(_document(1))
     dispatcher = FmeaToolDispatcher(service)
@@ -142,6 +186,26 @@ def test_dispatcher_exposes_query_without_a_configurable_limit() -> None:
 
     assert result["returned_count"] == 1
     assert "limit" not in properties
+
+
+def test_dispatcher_exposes_exact_rpn_summary_tool() -> None:
+    dispatcher = FmeaToolDispatcher(
+        _service(
+            _document(1, process="PVD", rpn=100),
+            _document(2, process="PVD", rpn=200),
+        )
+    )
+
+    result = dispatcher.execute("summarize_rpn_by_process", {})
+    tool = next(
+        item
+        for item in FMEA_TOOLS
+        if item["function"]["name"] == "summarize_rpn_by_process"
+    )
+
+    assert result["summaries"][0]["average_rpn"] == 150.0
+    assert set(tool["function"]["parameters"]["properties"]) == {"processes"}
+    assert tool["function"]["parameters"]["additionalProperties"] is False
 
 
 def test_machine_action_tool_schema_accepts_only_a_document_id() -> None:

@@ -45,6 +45,9 @@ class FakeQueryService:
     def query_records(self, **kwargs: Any) -> dict[str, Any]:
         return {"records": [], "arguments": kwargs}
 
+    def summarize_rpn_by_process(self, **kwargs: Any) -> dict[str, Any]:
+        return {"summaries": [], "arguments": kwargs}
+
 
 class FakeMachineActionService:
     def __init__(self) -> None:

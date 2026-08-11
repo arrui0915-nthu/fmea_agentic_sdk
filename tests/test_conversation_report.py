@@ -10,6 +10,9 @@ class FakeQueryService:
     def query_records(self, **kwargs):
         return {"records": [], "arguments": kwargs}
 
+    def summarize_rpn_by_process(self, **kwargs):
+        return {"summaries": [], "arguments": kwargs}
+
 
 def test_report_contains_summary_sections_and_full_escaped_transcript() -> None:
     service = SessionReportService(now=lambda: datetime(2026, 8, 11, 14, 30, 5))
@@ -71,6 +74,7 @@ def test_dispatcher_exposes_report_tool_and_injects_conversation() -> None:
 
     assert tool_names == [
         "query_fmea_records",
+        "summarize_rpn_by_process",
         "generate_session_report",
         "apply_machine_action",
     ]

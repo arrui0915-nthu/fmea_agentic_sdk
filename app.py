@@ -11,6 +11,7 @@ import streamlit as st
 from openai import OpenAI
 
 from src.config import ConfigurationError, load_settings
+from src.demo_questions import SAMPLE_QUESTIONS
 from src.faiss_knowledge_base import (
     KnowledgeBaseNotBuiltError,
     load_existing_knowledge_bases,
@@ -514,6 +515,17 @@ def _render_chat_page() -> None:
     st.title("FMEA 智慧顧問")
     st.caption("從可用的製程知識庫中搜尋相關 FMEA 資訊，整理成清楚、精簡的回答。")
 
+    sample_message = None
+    with st.expander("範例問題", expanded=not st.session_state.messages):
+        question_columns = st.columns(2)
+        for index, question in enumerate(SAMPLE_QUESTIONS):
+            if question_columns[index % 2].button(
+                question,
+                key=f"sample-question-{index}",
+                use_container_width=True,
+            ):
+                sample_message = question
+
     for message_index, message in enumerate(st.session_state.messages):
         with st.chat_message(message["role"]):
             st.markdown(message["content"])
@@ -524,7 +536,8 @@ def _render_chat_page() -> None:
                 )
                 _render_agent_trace(message.get("trace"))
 
-    user_message = st.chat_input("請輸入 FMEA 問題")
+    typed_message = st.chat_input("請輸入 FMEA 問題")
+    user_message = sample_message or typed_message
     if not user_message:
         return
 

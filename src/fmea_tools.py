@@ -69,6 +69,28 @@ QUERY_FMEA_RECORDS_TOOL: dict[str, Any] = {
     },
 }
 
+SUMMARIZE_RPN_BY_PROCESS_TOOL: dict[str, Any] = {
+    "type": "function",
+    "function": {
+        "name": "summarize_rpn_by_process",
+        "description": (
+            "精確計算各製程的平均 RPN，並依平均 RPN 由高到低回傳。"
+            "使用全部符合製程的 FMEA 紀錄計算，不受單筆查詢 20 筆上限影響。"
+        ),
+        "parameters": {
+            "type": "object",
+            "properties": {
+                "processes": {
+                    "type": "array",
+                    "items": {"type": "string"},
+                    "description": "製程代碼；省略代表計算全部製程。",
+                }
+            },
+            "additionalProperties": False,
+        },
+    },
+}
+
 GENERATE_SESSION_REPORT_TOOL: dict[str, Any] = {
     "type": "function",
     "function": {
@@ -146,6 +168,7 @@ APPLY_MACHINE_ACTION_TOOL: dict[str, Any] = {
 
 FMEA_TOOLS = [
     QUERY_FMEA_RECORDS_TOOL,
+    SUMMARIZE_RPN_BY_PROCESS_TOOL,
     GENERATE_SESSION_REPORT_TOOL,
     APPLY_MACHINE_ACTION_TOOL,
 ]
@@ -164,6 +187,7 @@ class FmeaToolDispatcher:
         self._machine_action_service = machine_action_service
         self._handlers = {
             "query_fmea_records": query_service.query_records,
+            "summarize_rpn_by_process": query_service.summarize_rpn_by_process,
             "generate_session_report": self._report_service.generate_session_report,
         }
 
